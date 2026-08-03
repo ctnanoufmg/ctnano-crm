@@ -43,7 +43,7 @@ export default function LoginForm() {
   return <main className="login-page">
     <section className="login-card">
       <div className="login-brand"><img src="/ctnano-logo.webp" alt="CTNano/UFMG" /><span>CRM · Novos Negócios</span></div>
-      <div><p className="eyebrow">Acesso institucional</p><h1>{mode === "login" ? "Entrar no CRM" : "Criar uma conta"}</h1><p className="login-copy">Acesso exclusivo para integrantes do CTNano com e-mail institucional.</p></div>
+      <div><p className="eyebrow">Acesso institucional</p>{mode === "signup" && <h1>Criar uma conta</h1>}<p className="login-copy">Acesso exclusivo com e-mail institucional CTNano/UFMG</p></div>
       <form onSubmit={submit}>
         {mode === "signup" && <><label><span>Nome completo *</span><input name="fullName" autoComplete="name" required /></label><label><span>Telefone</span><input name="phone" type="tel" autoComplete="tel" /></label></>}
         <label><span>E-mail institucional *</span><input name="email" type="email" autoComplete="email" placeholder="nome@ctnano.org" required /></label>
