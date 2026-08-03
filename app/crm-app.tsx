@@ -484,7 +484,7 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
             </button>
           ))}
           <p className="nav-label second">Execução & gestão</p>
-          {nav.slice(5).map((item) => (
+          {nav.slice(5).filter((item) => currentUser.isAdmin || item.id !== "configuracoes").map((item) => (
             <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => { setPage(item.id); setSidebarOpen(false); }}>
               <Icon>{item.icon}</Icon>{item.label}
             </button>
@@ -521,7 +521,7 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
           {page === "atividades" && <Activities data={data} edit={(record) => setModal({ entity: "activities", record: record as unknown as Record<string, unknown> })} />}
           {page === "projetos" && <Projects data={data} edit={(record) => setModal({ entity: "projects", record: record as unknown as Record<string, unknown> })} />}
           {page === "indicadores" && <Indicators data={data} metrics={indicatorMetrics} year={selectedKpiYear} setYear={setSelectedKpiYear} />}
-          {page === "configuracoes" && <Settings data={data} canManageKpis={currentUser.isAdmin} addKpi={() => setModal({ entity: "kpis" })} editKpi={(record) => setModal({ entity: "kpis", record: record as unknown as Record<string, unknown> })} addUser={() => setModal({ entity: "users" })} editUser={(record) => setModal({ entity: "users", record: record as unknown as Record<string, unknown> })} onImport={async (file) => {
+          {page === "configuracoes" && currentUser.isAdmin && <Settings data={data} canManageKpis={currentUser.isAdmin} addKpi={() => setModal({ entity: "kpis" })} editKpi={(record) => setModal({ entity: "kpis", record: record as unknown as Record<string, unknown> })} addUser={() => setModal({ entity: "users" })} editUser={(record) => setModal({ entity: "users", record: record as unknown as Record<string, unknown> })} onImport={async (file) => {
             try {
               const payload = JSON.parse(await file.text());
               const response = await fetch("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
