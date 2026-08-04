@@ -2,14 +2,15 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createSupabaseBrowserClient } from "../lib/supabase/client";
+import { createConfigurableReportExcel, type ReportExcelSection } from "../lib/excel-export";
 
-type Page = "dashboard" | "empresas" | "contatos" | "oportunidades" | "atividades" | "projetos" | "indicadores" | "configuracoes";
+type Page = "dashboard" | "empresas" | "contatos" | "oportunidades" | "atividades" | "projetos" | "indicadores" | "relatorios" | "configuracoes";
 type Entity = "users" | "companies" | "contacts" | "opportunities" | "activities" | "projects" | "kpis";
 
 type CRMUser = { id: number; fullName: string; email: string; phone: string; role: "admin" | "user"; active: boolean; createdAt?: string };
 type Company = { id: number; tradeName: string; legalName: string; cnpj: string; organizationType: string; mappingDate: string; size: string; sector: string; uf: string; status: string; responsibleUserId?: number | null; createdAt?: string };
 type Contact = { id: number; companyId: number | null; name: string; email: string; phone: string; role: string; prospectingDate: string; source: string; responsibleUserId?: number | null; createdAt?: string };
-type Opportunity = { id: number; companyId: number; sourceCode?: string; title: string; stage: string; sourceStatus?: string; lossReason?: string; origin?: string; technicalTeam?: string; modality: string; totalValue: number; companyValue: number; economicValue?: number; embrapiiValue?: number; probability: number; owner: string; responsibleUserId?: number | null; uf?: string; proposalDate: string; sentDate: string; acceptedDate?: string; contractDate: string; negotiationDays?: number; contractingDays?: number; nextStep: string; dueDate: string; createdAt?: string };
+type Opportunity = { id: number; companyId: number; sourceCode?: string; projectCode?: string; title: string; stage: string; sourceStatus?: string; lossReason?: string; origin?: string; technicalTeam?: string; modality: string; totalValue: number; companyValue: number; economicValue?: number; embrapiiValue?: number; probability: number; owner: string; responsibleUserId?: number | null; uf?: string; proposalDate: string; sentDate: string; acceptedDate?: string; contractDate: string; negotiationDays?: number; contractingDays?: number; nextStep: string; dueDate: string; createdAt?: string };
 type Activity = { id: number; opportunityId: number | null; companyId: number | null; type: string; title: string; dueDate: string; owner: string; responsibleUserId?: number | null; status: string; notes: string };
 type Project = { id: number; opportunityId: number | null; companyId: number; name: string; status: string; startDate: string; endDate: string; manager: string; responsibleUserId?: number | null; handoverProgress: number; totalValue: number };
 type KpiAnnualTarget = { year: number; target: number; manualActual: number };
@@ -25,6 +26,7 @@ const nav: { id: Page; label: string; icon: string }[] = [
   { id: "atividades", label: "Atividades", icon: "✓" },
   { id: "projetos", label: "Projetos & handover", icon: "⬡" },
   { id: "indicadores", label: "Indicadores", icon: "↗" },
+  { id: "relatorios", label: "Relatórios", icon: "▤" },
   { id: "configuracoes", label: "Configurações", icon: "⚙" },
 ];
 
@@ -420,7 +422,7 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
   const metrics = useMemo(() => calculateMetrics(data, dashboardRange), [data, dashboardRange]);
   const indicatorMetrics = useMemo(() => calculateMetrics(data, rangeForYear(selectedKpiYear)), [data, selectedKpiYear]);
   const availableYears = useMemo(() => {
-    const values = [localToday(), ...data.contacts.map((item) => item.prospectingDate), ...data.opportunities.flatMap((item) => [item.proposalDate, item.sentDate, item.acceptedDate ?? "", item.contractDate, item.createdAt ?? ""]), ...data.activities.map((item) => item.dueDate)];
+    const values = [localToday(), ...data.companies.map((item) => item.mappingDate || item.createdAt || ""), ...data.contacts.map((item) => item.prospectingDate), ...data.opportunities.flatMap((item) => [item.proposalDate, item.sentDate, item.acceptedDate ?? "", item.contractDate, item.createdAt ?? ""]), ...data.activities.map((item) => item.dueDate)];
     return Array.from(new Set(values.map((value) => Number(value?.slice(0, 4))).filter((value) => value >= 2000 && value <= 2100))).sort((a, b) => b - a);
   }, [data]);
 
@@ -521,6 +523,7 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
           {page === "atividades" && <Activities data={data} edit={(record) => setModal({ entity: "activities", record: record as unknown as Record<string, unknown> })} />}
           {page === "projetos" && <Projects data={data} edit={(record) => setModal({ entity: "projects", record: record as unknown as Record<string, unknown> })} />}
           {page === "indicadores" && <Indicators data={data} metrics={indicatorMetrics} year={selectedKpiYear} setYear={setSelectedKpiYear} />}
+          {page === "relatorios" && <Reports data={data} availableYears={availableYears} />}
           {page === "configuracoes" && currentUser.isAdmin && <Settings data={data} canManageKpis={currentUser.isAdmin} addKpi={() => setModal({ entity: "kpis" })} editKpi={(record) => setModal({ entity: "kpis", record: record as unknown as Record<string, unknown> })} addUser={() => setModal({ entity: "users" })} editUser={(record) => setModal({ entity: "users", record: record as unknown as Record<string, unknown> })} onImport={async (file) => {
             try {
               const payload = JSON.parse(await file.text());
@@ -807,6 +810,126 @@ function Indicators({ data, metrics, year, setYear }: { data: Snapshot; metrics:
   </>;
 }
 
+type ReportSectionKey = "indicators" | "prospectedCompanies" | "contractedProjects" | "openNegotiations";
+
+function Reports({ data, availableYears }: { data: Snapshot; availableYears: number[] }) {
+  const [range, setRange] = useState<DateRange>(() => rangeForPreset("currentYear"));
+  const [preset, setPreset] = useState<PeriodPreset>("currentYear");
+  const [sections, setSections] = useState<Record<ReportSectionKey, boolean>>({ indicators: true, prospectedCompanies: true, contractedProjects: true, openNegotiations: true });
+  const [excludedKpiIds, setExcludedKpiIds] = useState<number[]>([]);
+
+  const metrics = useMemo(() => calculateMetrics(data, range), [data, range]);
+  const periodYear = range.start.slice(0, 4) === range.end.slice(0, 4) ? Number(range.start.slice(0, 4)) : null;
+  const selectedKpis = data.kpis.filter((kpi) => !excludedKpiIds.includes(kpi.id));
+  const contactsInPeriod = data.contacts.filter((contact) => inRange(contact.prospectingDate || contact.createdAt, range));
+  const prospectedCompanies = Array.from(new Set(contactsInPeriod.map((contact) => contact.companyId).filter((id): id is number => Boolean(id))))
+    .map((companyId) => {
+      const company = data.companies.find((item) => item.id === companyId);
+      const contacts = contactsInPeriod.filter((item) => item.companyId === companyId).sort((a, b) => (a.prospectingDate || "").localeCompare(b.prospectingDate || ""));
+      return company ? { company, contacts, firstDate: contacts[0]?.prospectingDate ?? "", lastDate: contacts.at(-1)?.prospectingDate ?? "" } : null;
+    })
+    .filter((item): item is { company: Company; contacts: Contact[]; firstDate: string; lastDate: string } => Boolean(item))
+    .sort((a, b) => b.lastDate.localeCompare(a.lastDate) || a.company.tradeName.localeCompare(b.company.tradeName, "pt-BR"));
+  const contractedProjects = data.opportunities.filter((item) => item.stage === "Contratada" && inRange(item.contractDate, range)).sort((a, b) => b.contractDate.localeCompare(a.contractDate));
+  const openNegotiations = data.opportunities.filter((item) => ["Aberto", "Aceito"].includes(item.sourceStatus ?? "") && inRange(item.sentDate || item.proposalDate || item.createdAt, range)).sort((a, b) => (b.sentDate || b.proposalDate || b.createdAt || "").localeCompare(a.sentDate || a.proposalDate || a.createdAt || ""));
+
+  const averageForRange = (startField: "sentDate" | "acceptedDate", endField: "acceptedDate" | "contractDate") => {
+    const values = data.opportunities
+      .filter((item) => inRange(item[endField], range))
+      .map((item) => elapsedDays(item[startField], item[endField]))
+      .filter((value): value is number => value !== null);
+    return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+  };
+  const reportKpiActual = (kpi: KPI) => {
+    switch (kpi.measurementMethod) {
+      case "Organizações do tipo Empresa cadastradas no ano": return metrics.mapped;
+      case "Contatos prospectados no ano": return metrics.prospected;
+      case "Propostas técnicas enviadas no ano": return metrics.proposals;
+      case "Projetos contratados no ano": return metrics.contracted;
+      case "Empresas contratantes únicas no ano": return metrics.contractingCompanies;
+      case "Startups/MPEs contratantes no ano": return metrics.mpeStartup;
+      case "Tempo médio de negociação concluída no ano": return averageForRange("sentDate", "acceptedDate");
+      case "Tempo médio de contratação concluída no ano": return averageForRange("acceptedDate", "contractDate");
+      default: return periodYear ? annualTarget(kpi, periodYear)?.manualActual ?? 0 : 0;
+    }
+  };
+  const reportKpis = selectedKpis.map((kpi) => {
+    const actual = reportKpiActual(kpi);
+    const goal = periodYear ? annualTarget(kpi, periodYear)?.target : undefined;
+    const attainment = goal ? Math.round(kpiAttainment(actual, goal, kpi.direction)) : null;
+    return { kpi, actual, goal, attainment };
+  });
+
+  function applyReportPreset(nextPreset: Exclude<PeriodPreset, "custom" | "year">) {
+    setPreset(nextPreset);
+    setRange(rangeForPreset(nextPreset));
+  }
+  function selectReportYear(year: number) {
+    setPreset(year === currentYear() ? "currentYear" : "year");
+    setRange(rangeForYear(year));
+  }
+  function changeReportRange(field: keyof DateRange, value: string) {
+    setPreset("custom");
+    setRange((current) => field === "start" ? { start: value, end: value > current.end ? value : current.end } : { start: value < current.start ? value : current.start, end: value });
+  }
+  function toggleSection(key: ReportSectionKey) {
+    setSections((current) => ({ ...current, [key]: !current[key] }));
+  }
+  function toggleKpi(id: number) {
+    setExcludedKpiIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+  function exportReport() {
+    const excelSections: ReportExcelSection[] = [];
+    if (sections.indicators) excelSections.push({ name: "Indicadores", columns: [
+      { header: "Indicador", key: "indicator", width: 34 }, { header: "Realizado no período", key: "actual", width: 20, type: "number" }, { header: "Unidade", key: "unit", width: 16 },
+      { header: "Meta anual", key: "goal", width: 16, type: "number" }, { header: "Atendimento (%)", key: "attainment", width: 18, type: "number" }, { header: "Direção", key: "direction", width: 24 }, { header: "Peso", key: "weight", width: 10, type: "integer" },
+    ], rows: reportKpis.map(({ kpi, actual, goal, attainment }) => ({ indicator: kpi.label, actual, unit: kpi.unit, goal: goal ?? "", attainment: attainment ?? "", direction: kpi.direction, weight: kpi.weight })) });
+    if (sections.prospectedCompanies) excelSections.push({ name: "Empresas prospectadas", columns: [
+      { header: "Empresa", key: "company", width: 28 }, { header: "CNPJ", key: "cnpj", width: 20 }, { header: "Setor", key: "sector", width: 24 }, { header: "UF", key: "uf", width: 8 },
+      { header: "Contatos prospectados", key: "contacts", width: 36 }, { header: "Primeira prospecção", key: "firstDate", width: 19, type: "date" }, { header: "Última prospecção", key: "lastDate", width: 19, type: "date" }, { header: "Responsável", key: "responsible", width: 24 },
+    ], rows: prospectedCompanies.map(({ company, contacts, firstDate, lastDate }) => ({ company: company.tradeName, cnpj: company.cnpj, sector: company.sector, uf: company.uf, contacts: contacts.map((item) => item.name).join("; "), firstDate, lastDate, responsible: responsibleName(data, contacts.at(-1)?.responsibleUserId ?? company.responsibleUserId) })) });
+    if (sections.contractedProjects) excelSections.push({ name: "Projetos contratados", columns: [
+      { header: "Código do projeto", key: "projectCode", width: 20 }, { header: "Código da negociação", key: "sourceCode", width: 21 }, { header: "Projeto", key: "title", width: 34 }, { header: "Empresa", key: "company", width: 27 },
+      { header: "Conclusão da contratação", key: "contractDate", width: 22, type: "date" }, { header: "Valor total", key: "totalValue", width: 18, type: "currency" }, { header: "Modalidade", key: "modality", width: 21 }, { header: "Responsável", key: "responsible", width: 24 },
+    ], rows: contractedProjects.map((item) => ({ projectCode: item.projectCode ?? "", sourceCode: item.sourceCode ?? "", title: item.title, company: companyName(data, item.companyId), contractDate: item.contractDate, totalValue: item.totalValue, modality: item.modality, responsible: responsibleName(data, item.responsibleUserId, item.owner) })) });
+    if (sections.openNegotiations) excelSections.push({ name: "Negociações abertas", columns: [
+      { header: "Código", key: "sourceCode", width: 18 }, { header: "Oportunidade", key: "title", width: 34 }, { header: "Empresa", key: "company", width: 27 }, { header: "Etapa", key: "stage", width: 18 }, { header: "Resultado", key: "result", width: 14 },
+      { header: "Proposta enviada em", key: "sentDate", width: 19, type: "date" }, { header: "Valor total", key: "totalValue", width: 18, type: "currency" }, { header: "Probabilidade (%)", key: "probability", width: 18, type: "number" }, { header: "Próximo passo", key: "nextStep", width: 34 }, { header: "Responsável", key: "responsible", width: 24 },
+    ], rows: openNegotiations.map((item) => ({ sourceCode: item.sourceCode ?? "", title: item.title, company: companyName(data, item.companyId), stage: item.stage, result: item.sourceStatus ?? "", sentDate: item.sentDate, totalValue: item.totalValue, probability: item.probability, nextStep: item.nextStep, responsible: responsibleName(data, item.responsibleUserId, item.owner) })) });
+    if (!excelSections.length) return;
+    const bytes = createConfigurableReportExcel(excelSections, `Relatório CTNano · ${formatRange(range)}`);
+    const blob = new Blob([new Uint8Array(bytes)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Relatorio_CTNano_${range.start}_a_${range.end}.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const selectedYear = periodYear && availableYears.includes(periodYear) ? String(periodYear) : "";
+  const hasSection = Object.values(sections).some(Boolean);
+  return <div className="reports-page">
+    <section className="welcome-row report-screen-only"><div><h2>Relatórios</h2><p>Configure o período, os indicadores e as listas que serão incluídas.</p></div></section>
+    <section className="panel report-config report-screen-only">
+      <div className="report-config-block"><div><p className="eyebrow">Período</p><h3>Intervalo de apuração</h3></div><div className="quick-periods"><button className={preset === "currentYear" ? "active" : ""} onClick={() => applyReportPreset("currentYear")}>Ano atual</button><button className={preset === "currentMonth" ? "active" : ""} onClick={() => applyReportPreset("currentMonth")}>Mês atual</button><button className={preset === "last7Days" ? "active" : ""} onClick={() => applyReportPreset("last7Days")}>Últimos 7 dias</button></div><label className="year-filter"><span>Ano dos registros</span><select value={selectedYear} onChange={(event) => { if (event.target.value) selectReportYear(Number(event.target.value)); }}><option value="">Selecionar ano</option>{availableYears.map((year) => <option value={year} key={year}>{year}</option>)}</select></label><div className="report-date-range"><label><span>Data inicial</span><input type="date" value={range.start} max={range.end} onChange={(event) => changeReportRange("start", event.target.value)} /></label><span>até</span><label><span>Data final</span><input type="date" value={range.end} min={range.start} onChange={(event) => changeReportRange("end", event.target.value)} /></label></div></div>
+      <div className="report-config-block"><div><p className="eyebrow">Conteúdo</p><h3>Seções do relatório</h3></div><div className="report-option-grid">{([
+        ["indicators", "Indicadores", "Resultados dos indicadores selecionados"], ["prospectedCompanies", "Empresas prospectadas", "Organizações com contatos no período"], ["contractedProjects", "Projetos contratados", "Oportunidades contratadas no período"], ["openNegotiations", "Negociações abertas", "Resultados Em aberto e Aceito no período"],
+      ] as [ReportSectionKey, string, string][]).map(([key, label, detail]) => <label className="report-option" key={key}><input type="checkbox" checked={sections[key]} onChange={() => toggleSection(key)} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}</div></div>
+      {sections.indicators && <div className="report-config-block wide"><div className="report-config-title"><div><p className="eyebrow">Indicadores</p><h3>Escolha os indicadores</h3></div><div><button className="text-button" onClick={() => setExcludedKpiIds([])}>Selecionar todos</button><button className="text-button" onClick={() => setExcludedKpiIds(data.kpis.map((kpi) => kpi.id))}>Limpar</button></div></div><div className="report-kpi-options">{data.kpis.map((kpi) => <label key={kpi.id}><input type="checkbox" checked={!excludedKpiIds.includes(kpi.id)} onChange={() => toggleKpi(kpi.id)} /><span>{kpi.label}</span></label>)}</div></div>}
+      <div className="report-actions wide"><span>Período selecionado: <strong>{formatRange(range)}</strong></span><button className="secondary-button" disabled={!hasSection} onClick={() => window.print()}>Imprimir / salvar PDF</button><button className="primary-button" disabled={!hasSection} onClick={exportReport}>Exportar Excel</button></div>
+    </section>
+    {!hasSection ? <section className="panel report-empty report-screen-only">Selecione ao menos uma seção para gerar o relatório.</section> : <article className="report-output">
+      <header className="report-document-header"><div className="report-document-brand"><img src="/ctnano-logo.webp" alt="CTNano/UFMG" /><div><p>CRM · Novos Negócios</p><h2>Relatório comercial</h2></div></div><div><strong>{formatRange(range)}</strong><span>Gerado em {new Date().toLocaleString("pt-BR")}</span></div></header>
+      {sections.indicators && <section className="report-section"><div className="report-section-title"><div><p className="eyebrow">Desempenho</p><h3>Indicadores</h3></div><span>{reportKpis.length} selecionados</span></div><DataTable headers={["Indicador", "Realizado", "Meta anual", "Atendimento", "Unidade", "Peso"]} rows={reportKpis.map(({ kpi, actual, goal, attainment }) => [<strong key="kpi">{kpi.label}</strong>, formatKpiValue(actual, kpi.unit), goal === undefined ? "—" : formatKpiValue(goal, kpi.unit), attainment === null ? "—" : `${attainment}%`, kpi.unit, number.format(kpi.weight)])} /></section>}
+      {sections.prospectedCompanies && <section className="report-section"><div className="report-section-title"><div><p className="eyebrow">Prospecção</p><h3>Empresas prospectadas</h3></div><span>{prospectedCompanies.length} empresas · {contactsInPeriod.length} contatos</span></div><DataTable headers={["Empresa", "CNPJ", "Setor", "UF", "Contatos", "Última prospecção", "Responsável"]} rows={prospectedCompanies.map(({ company, contacts, lastDate }) => [<div key="company"><strong>{company.tradeName}</strong><small className="block">{company.legalName}</small></div>, company.cnpj || "—", company.sector || "—", company.uf || "—", contacts.map((item) => item.name).join(", "), date(lastDate), responsibleName(data, contacts.at(-1)?.responsibleUserId ?? company.responsibleUserId)])} /></section>}
+      {sections.contractedProjects && <section className="report-section"><div className="report-section-title"><div><p className="eyebrow">Contratações</p><h3>Projetos contratados</h3></div><span>{contractedProjects.length} projetos · {money.format(contractedProjects.reduce((sum, item) => sum + item.totalValue, 0))}</span></div><DataTable headers={["Código do projeto", "Projeto", "Empresa", "Contratação", "Valor", "Modalidade", "Responsável"]} rows={contractedProjects.map((item) => [item.projectCode || "—", <div key="project"><strong>{item.title}</strong><small className="block">Negociação: {item.sourceCode || "—"}</small></div>, companyName(data, item.companyId), date(item.contractDate), money.format(item.totalValue), item.modality, responsibleName(data, item.responsibleUserId, item.owner)])} /></section>}
+      {sections.openNegotiations && <section className="report-section"><div className="report-section-title"><div><p className="eyebrow">Pipeline</p><h3>Negociações em aberto e aceitas</h3></div><span>{openNegotiations.length} negociações · {money.format(openNegotiations.reduce((sum, item) => sum + item.totalValue, 0))}</span></div><DataTable headers={["Oportunidade", "Empresa", "Etapa", "Resultado", "Envio", "Valor", "Probabilidade", "Próximo passo", "Responsável"]} rows={openNegotiations.map((item) => [<div key="opportunity"><strong>{item.title}</strong><small className="block">{item.sourceCode || "Sem código"}</small></div>, companyName(data, item.companyId), <Status key="stage" value={item.stage} />, <Status key="result" value={item.sourceStatus || "Aberto"} />, date(item.sentDate), money.format(item.totalValue), `${number.format(item.probability)}%`, item.nextStep || "—", responsibleName(data, item.responsibleUserId, item.owner)])} /></section>}
+      <footer className="report-document-footer">CTNano/UFMG · Relatório gerado pelo CRM institucional</footer>
+    </article>}
+  </div>;
+}
+
 function Settings({ data, onBackup, onImport, addKpi, editKpi, addUser, editUser, canManageKpis }: { data: Snapshot; onBackup: () => void; onImport: (file: File) => void; addKpi: () => void; editKpi: (record: KPI) => void; addUser: () => void; editUser: (record: CRMUser) => void; canManageKpis: boolean }) {
   const totalWeight = data.kpis.reduce((sum, kpi) => sum + (Number(kpi.weight) || 0), 0);
   return <div className="settings-grid">
@@ -845,7 +968,7 @@ function RecordModal({ modal, snapshot, close, save }: { modal: { entity: Entity
     users: { label: "usuário", fields: [["fullName", "Nome completo", "text"], ["email", "E-mail @ctnano.org", "email"], ["phone", "Telefone", "tel"], ["role", "Perfil de acesso", "select", ["user", "admin"]], ["active", "Usuário ativo", "checkbox"]] },
     companies: { label: "organização", fields: [["tradeName", "Nome fantasia", "text"], ["legalName", "Razão social", "text"], ["cnpj", "CNPJ", "text"], ["organizationType", "Tipo de organização", "select", ["Empresa", "Governo", "Investidor", "Outras"]], ["mappingDate", "Data de mapeamento", "date"], ["responsibleUserId", "Pessoa responsável", "user"], ["size", "Porte", "select", ["Startup", "MPE", "Média", "Grande", "Outros"]], ["sector", "Setor industrial", "text"], ["uf", "UF", "text"], ["status", "Status", "select", ["Ativa", "Inativa"]]] },
     contacts: { label: "contato", fields: [["name", "Nome", "text"], ["companyId", "Organização", "company"], ["responsibleUserId", "Pessoa responsável", "user"], ["email", "E-mail", "email"], ["phone", "Telefone", "tel"], ["role", "Cargo", "text"], ["prospectingDate", "Data da prospecção", "date"], ["source", "Origem", "select", ["Prospecção ativa", "Evento", "Indicação", "Site", "Outro"]]] },
-    opportunities: { label: "oportunidade", fields: [["sourceCode", "Código da negociação", "text"], ["title", "Título", "text"], ["companyId", "Empresa", "company"], ["responsibleUserId", "Pessoa responsável", "user"], ["stage", "Etapa", "select", stages], ["sourceStatus", "Resultado", "select", ["Aberto", "Aceito", "Perdido"]], ["lossReason", "Motivo da perda", "text"], ["origin", "Origem", "text"], ["technicalTeam", "Equipe técnica", "text"], ["modality", "Modalidade", "select", ["EMBRAPII CG", "ROTA 2030", "SEBRAE DT", "SEBRAE ET", "Alta Alavancagem", "Ministério da Saúde", "Outro"]], ["uf", "UF", "text"], ["totalValue", "Valor total (R$)", "number"], ["companyValue", "Valor da empresa (R$)", "number"], ["economicValue", "Valor econômico (R$)", "number"], ["embrapiiValue", "Participação EMBRAPII (R$)", "number"], ["probability", "Probabilidade (%)", "number"], ["proposalDate", "Data de elaboração", "date"], ["sentDate", "Proposta enviada em", "date"], ["acceptedDate", "Data de aceite/recusa", "date"], ["contractDate", "Conclusão da contratação", "date"], ["nextStep", "Próximo passo", "text"], ["dueDate", "Expectativa de fechamento", "date"]] },
+    opportunities: { label: "oportunidade", fields: [["sourceCode", "Código da negociação", "text"], ["projectCode", "Código do projeto", "text"], ["title", "Título", "text"], ["companyId", "Empresa", "company"], ["responsibleUserId", "Pessoa responsável", "user"], ["stage", "Etapa", "select", stages], ["sourceStatus", "Resultado", "select", ["Aberto", "Aceito", "Perdido"]], ["lossReason", "Motivo da perda", "text"], ["origin", "Origem", "text"], ["technicalTeam", "Equipe técnica", "text"], ["modality", "Modalidade", "select", ["EMBRAPII CG", "ROTA 2030", "SEBRAE DT", "SEBRAE ET", "Alta Alavancagem", "Ministério da Saúde", "Outro"]], ["uf", "UF", "text"], ["totalValue", "Valor total (R$)", "number"], ["companyValue", "Valor da empresa (R$)", "number"], ["economicValue", "Valor econômico (R$)", "number"], ["embrapiiValue", "Participação EMBRAPII (R$)", "number"], ["probability", "Probabilidade (%)", "number"], ["proposalDate", "Data de elaboração", "date"], ["sentDate", "Proposta enviada em", "date"], ["acceptedDate", "Data de aceite/recusa", "date"], ["contractDate", "Conclusão da contratação", "date"], ["nextStep", "Próximo passo", "text"], ["dueDate", "Expectativa de fechamento", "date"]] },
     activities: { label: "atividade", fields: [["title", "Título", "text"], ["companyId", "Empresa", "company"], ["opportunityId", "Oportunidade", "opportunity"], ["responsibleUserId", "Pessoa responsável", "user"], ["type", "Tipo", "select", ["Tarefa", "Reunião", "Follow-up", "Nota"]], ["dueDate", "Prazo", "date"], ["status", "Status", "select", ["Pendente", "Concluída", "Cancelada"]], ["notes", "Observações", "textarea"]] },
     projects: { label: "projeto", fields: [["name", "Nome", "text"], ["companyId", "Empresa", "company"], ["opportunityId", "Oportunidade de origem", "opportunity"], ["responsibleUserId", "Pessoa responsável", "user"], ["status", "Status", "select", ["Handover", "Em execução", "Suspenso", "Concluído"]], ["startDate", "Início", "date"], ["endDate", "Término", "date"], ["handoverProgress", "Handover (%)", "number"], ["totalValue", "Valor total (R$)", "number"]] },
     kpis: { label: "indicador", fields: [["label", "Nome do indicador", "text"], ["responsibleUserId", "Pessoa responsável", "user"], ["measurementMethod", "Forma de apuração", "select", measurementMethods], ["unit", "Unidade", "select", ["Percentual", "Unidade", "Monetário", "Outro"]], ["direction", "Direção da meta", "select", ["Quanto maior, melhor", "Quanto menor, melhor"]], ["weight", "Peso (1 a 5)", "number"], ["showOnDashboard", "Mostrar este indicador no Painel", "checkbox"]] },
@@ -860,14 +983,12 @@ function RecordModal({ modal, snapshot, close, save }: { modal: { entity: Entity
       if (!isValidCnpj(String(values.cnpj ?? ""))) { setError("Informe um CNPJ brasileiro válido ou deixe o campo vazio."); setSaving(false); return; }
     }
     if (modal.entity === "opportunities") {
-      if (values.stage !== "Contratada") values.contractDate = "";
+      if (values.stage !== "Contratada") values.projectCode = String(modal.record?.projectCode ?? "");
       values.dueDate = expectedClosingDate(snapshot, String(values.sourceStatus ?? ""), String(values.acceptedDate ?? ""));
       const negotiationDays = elapsedDays(String(values.sentDate ?? ""), String(values.acceptedDate ?? ""));
       const contractingDays = elapsedDays(String(values.acceptedDate ?? ""), String(values.contractDate ?? ""));
-      if (values.acceptedDate && !values.sentDate) { setError("Informe a data de envio da proposta antes da data de aceite/recusa."); setSaving(false); return; }
-      if (values.acceptedDate && negotiationDays === null) { setError("A data de aceite/recusa não pode ser anterior ao envio da proposta."); setSaving(false); return; }
-      if (values.contractDate && !values.acceptedDate) { setError("Informe a data de aceite antes da conclusão da contratação."); setSaving(false); return; }
-      if (values.contractDate && contractingDays === null) { setError("A conclusão da contratação não pode ser anterior à data de aceite/recusa."); setSaving(false); return; }
+      if (values.sentDate && values.acceptedDate && negotiationDays === null) { setError("A data de aceite/recusa não pode ser anterior ao envio da proposta."); setSaving(false); return; }
+      if (values.acceptedDate && values.contractDate && contractingDays === null) { setError("A conclusão da contratação não pode ser anterior à data de aceite/recusa."); setSaving(false); return; }
     }
     if (modal.entity === "kpis") {
       const selected = kpiTargets.filter((item) => item.year >= currentYear());
@@ -878,7 +999,7 @@ function RecordModal({ modal, snapshot, close, save }: { modal: { entity: Entity
     try { await save(modal.entity, values); } catch (e) { setError(e instanceof Error ? e.message : "Erro ao salvar."); setSaving(false); }
   }
   const negotiationPreview = elapsedDays(opportunityDates.sentDate, opportunityDates.acceptedDate);
-  const contractingPreview = opportunityStage === "Contratada" ? elapsedDays(opportunityDates.acceptedDate, opportunityDates.contractDate) : null;
+  const contractingPreview = elapsedDays(opportunityDates.acceptedDate, opportunityDates.contractDate);
   const expectedClosingPreview = expectedClosingDate(snapshot, opportunityResult, opportunityDates.acceptedDate);
   const isEdit = Boolean(modal.record?.id);
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
@@ -887,6 +1008,7 @@ function RecordModal({ modal, snapshot, close, save }: { modal: { entity: Entity
       <form onSubmit={submit}>
         <div className="form-grid">{definition.fields.map(([name, label, type, options]) => {
           const isContractDate = modal.entity === "opportunities" && name === "contractDate";
+          const isProjectCode = modal.entity === "opportunities" && name === "projectCode";
           const isExpectedClosing = modal.entity === "opportunities" && name === "dueDate";
           const onDateChange = modal.entity === "opportunities" && ["sentDate", "acceptedDate", "contractDate"].includes(name) ? (event: React.ChangeEvent<HTMLInputElement>) => setOpportunityDates((current) => ({ ...current, [name]: event.target.value })) : undefined;
           const isSystemMeasurement = modal.entity === "kpis" && name === "measurementMethod" && Boolean(systemKpiMethods[String(modal.record?.key ?? "")]);
@@ -900,7 +1022,7 @@ function RecordModal({ modal, snapshot, close, save }: { modal: { entity: Entity
                   : type === "user" ? <select name={name} defaultValue={String(modal.record?.[name] ?? "")} required><option value="">Selecione...</option>{snapshot.users.filter((user) => user.active || user.id === Number(modal.record?.[name])).map((user) => <option value={user.id} key={user.id}>{user.fullName}</option>)}</select>
                     : type === "textarea" ? <textarea name={name} defaultValue={String(modal.record?.[name] ?? "")} />
                     : type === "checkbox" ? <input className="checkbox-input" name={name} type="checkbox" defaultChecked={Boolean(modal.record ? modal.record[name] : true)} />
-                      : <input name={name} type={type} value={isExpectedClosing ? expectedClosingPreview : undefined} defaultValue={isExpectedClosing ? undefined : String(modal.record?.[name] ?? "")} min={name === "weight" ? 1 : undefined} max={name === "weight" ? 5 : undefined} maxLength={name === "cnpj" ? 18 : undefined} placeholder={name === "cnpj" ? "00.000.000/0000-00" : undefined} step={name === "weight" ? 1 : type === "number" ? "any" : undefined} required={["tradeName", "name", "title", "label", "fullName", "email"].includes(name)} disabled={isExpectedClosing || isContractDate && opportunityStage !== "Contratada"} onChange={onDateChange} aria-describedby={isContractDate || isExpectedClosing ? "contract-date-rule" : undefined} />
+                      : <input name={name} type={type} value={isExpectedClosing ? expectedClosingPreview : undefined} defaultValue={isExpectedClosing ? undefined : String(modal.record?.[name] ?? "")} min={name === "weight" ? 1 : undefined} max={name === "weight" ? 5 : undefined} maxLength={name === "cnpj" ? 18 : undefined} placeholder={name === "cnpj" ? "00.000.000/0000-00" : undefined} step={name === "weight" ? 1 : type === "number" ? "any" : undefined} required={["tradeName", "name", "title", "label", "fullName", "email"].includes(name)} disabled={isExpectedClosing || isProjectCode && opportunityStage !== "Contratada"} onChange={onDateChange} aria-describedby={isContractDate || isProjectCode || isExpectedClosing ? "contract-date-rule" : undefined} />
           }</label>;
         })}</div>
         {modal.entity === "kpis" && <section className="kpi-year-editor"><header><div><strong>Metas anuais</strong><span>Escolha até cinco anos a partir de {currentYear()}.</span></div><small>{kpiTargets.filter((item) => item.year >= currentYear()).length}/5 anos selecionados</small></header><div className="kpi-year-list">{selectableKpiYears.map((year) => {
@@ -912,7 +1034,7 @@ function RecordModal({ modal, snapshot, close, save }: { modal: { entity: Entity
             setError(""); setKpiTargets((current) => [...current, { year, target: 0, manualActual: 0 }].sort((a, b) => a.year - b.year));
           }} /><strong>{year}</strong></label>{row && <><label><span>Valor da meta</span><input type="number" step="any" value={row.target} onChange={(event) => setKpiTargets((current) => current.map((item) => item.year === year ? { ...item, target: Number(event.target.value) } : item))} /></label><label><span>Realizado manual</span><input type="number" step="any" value={row.manualActual} disabled={kpiMeasurementMethod !== "Apuração manual"} onChange={(event) => setKpiTargets((current) => current.map((item) => item.year === year ? { ...item, manualActual: Number(event.target.value) } : item))} /></label></>}</div>;
         })}</div>{kpiTargets.some((item) => item.year < currentYear()) && <p className="historical-targets">Metas de anos anteriores foram preservadas no histórico e não são alteradas nesta tela.</p>}</section>}
-        {modal.entity === "opportunities" && <><div className="opportunity-time-preview"><div><span>Tempo de negociação</span><strong>{durationLabel(negotiationPreview)}</strong></div><div><span>Tempo de contratação</span><strong>{durationLabel(contractingPreview)}</strong></div><div><span>Expectativa de fechamento</span><strong>{date(expectedClosingPreview)}</strong></div></div><p className="form-hint" id="contract-date-rule">A conclusão da contratação é habilitada somente quando a etapa selecionada for “Contratada”. A expectativa de fechamento é bloqueada e calculada quando o resultado é “Aceito”: data de aceite/recusa + {snapshot.insights.averageContractingDays === null ? "tempo médio de contratação disponível" : `${snapshot.insights.averageContractingDays} dias de tempo médio de contratação`}.</p></>}
+        {modal.entity === "opportunities" && <><div className="opportunity-time-preview"><div><span>Tempo de negociação</span><strong>{durationLabel(negotiationPreview)}</strong></div><div><span>Tempo de contratação</span><strong>{durationLabel(contractingPreview)}</strong></div><div><span>Expectativa de fechamento</span><strong>{date(expectedClosingPreview)}</strong></div></div><p className="form-hint" id="contract-date-rule">A conclusão da contratação pode ser editada em qualquer etapa. O código do projeto é habilitado quando a etapa for “Contratada”. A expectativa de fechamento é bloqueada e calculada quando o resultado é “Aceito”: data de aceite/recusa + {snapshot.insights.averageContractingDays === null ? "tempo médio de contratação disponível" : `${snapshot.insights.averageContractingDays} dias de tempo médio de contratação`}.</p></>}
         {modal.entity === "kpis" && <p className="form-hint">O campo “Realizado manual” é habilitado apenas para apuração manual. A forma de apuração dos indicadores automáticos é protegida pelo sistema, e a opção de exibição no Painel pode ser alterada a qualquer momento.</p>}
         {error && <p className="form-error">{error}</p>}
         <footer><button type="button" className="secondary-button" onClick={close}>Cancelar</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "Salvando..." : "Salvar registro"}</button></footer>

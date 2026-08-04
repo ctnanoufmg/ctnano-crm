@@ -16,7 +16,7 @@ const fieldMaps: Record<CrmEntity, Record<string, string>> = {
   users: { fullName: "full_name", email: "email", phone: "phone", role: "role", active: "active", authUserId: "auth_user_id" },
   companies: { tradeName: "trade_name", legalName: "legal_name", cnpj: "cnpj", organizationType: "organization_type", mappingDate: "mapping_date", size: "size", sector: "sector", uf: "uf", status: "status", responsibleUserId: "responsible_user_id" },
   contacts: { companyId: "company_id", name: "name", email: "email", phone: "phone", role: "role", prospectingDate: "prospecting_date", source: "source", responsibleUserId: "responsible_user_id" },
-  opportunities: { companyId: "company_id", sourceCode: "source_code", title: "title", stage: "stage", sourceStatus: "source_status", lossReason: "loss_reason", origin: "origin", technicalTeam: "technical_team", modality: "modality", totalValue: "total_value", companyValue: "company_value", economicValue: "economic_value", embrapiiValue: "embrapii_value", probability: "probability", owner: "owner", responsibleUserId: "responsible_user_id", uf: "uf", proposalDate: "proposal_date", sentDate: "sent_date", acceptedDate: "accepted_date", contractDate: "contract_date", negotiationDays: "negotiation_days", contractingDays: "contracting_days", nextStep: "next_step", dueDate: "due_date" },
+  opportunities: { companyId: "company_id", sourceCode: "source_code", projectCode: "project_code", title: "title", stage: "stage", sourceStatus: "source_status", lossReason: "loss_reason", origin: "origin", technicalTeam: "technical_team", modality: "modality", totalValue: "total_value", companyValue: "company_value", economicValue: "economic_value", embrapiiValue: "embrapii_value", probability: "probability", owner: "owner", responsibleUserId: "responsible_user_id", uf: "uf", proposalDate: "proposal_date", sentDate: "sent_date", acceptedDate: "accepted_date", contractDate: "contract_date", negotiationDays: "negotiation_days", contractingDays: "contracting_days", nextStep: "next_step", dueDate: "due_date" },
   activities: { opportunityId: "opportunity_id", companyId: "company_id", type: "type", title: "title", dueDate: "due_date", owner: "owner", responsibleUserId: "responsible_user_id", status: "status", notes: "notes" },
   projects: { opportunityId: "opportunity_id", companyId: "company_id", name: "name", status: "status", startDate: "start_date", endDate: "end_date", manager: "manager", responsibleUserId: "responsible_user_id", handoverProgress: "handover_progress", totalValue: "total_value" },
   kpis: { key: "key", label: "label", unit: "unit", direction: "direction", weight: "weight", measurementMethod: "measurement_method", responsibleUserId: "responsible_user_id", showOnDashboard: "show_on_dashboard", targets: "targets", manualActual2026: "manual_actual_2026", manualActual2027: "manual_actual_2027", manualActual2028: "manual_actual_2028", target2026: "target_2026", target2027: "target_2027", target2028: "target_2028" },
@@ -42,7 +42,11 @@ function mapRow(entity: CrmEntity, row: Record<string, unknown>) {
 export function toDatabase(entity: CrmEntity, values: Record<string, unknown>) {
   const result: Record<string, unknown> = {};
   for (const [camel, snake] of Object.entries(fieldMaps[entity])) {
-    if (Object.prototype.hasOwnProperty.call(values, camel)) result[snake] = dateFields.has(snake) && values[camel] === "" ? null : values[camel];
+    if (!Object.prototype.hasOwnProperty.call(values, camel)) continue;
+    const value = values[camel];
+    result[snake] = dateFields.has(snake)
+      ? value == null || typeof value === "string" && !value.trim() ? null : typeof value === "string" ? value.trim() : value
+      : value;
   }
   return result;
 }

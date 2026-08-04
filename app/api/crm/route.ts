@@ -56,7 +56,7 @@ function formatCnpj(value: string) {
 
 async function averageContractingDays() {
   const db = createAdminClient();
-  const { data, error } = await db.from("opportunities").select("accepted_date,contract_date").not("accepted_date", "eq", "").not("contract_date", "eq", "");
+  const { data, error } = await db.from("opportunities").select("accepted_date,contract_date").not("accepted_date", "is", null).not("contract_date", "is", null);
   if (error) throw new Error(error.message);
   const durations = (data ?? []).map((item) => elapsedDays(item.accepted_date, item.contract_date)).filter((days) => days >= 0);
   return durations.length ? Math.round(durations.reduce((sum, days) => sum + days, 0) / durations.length) : null;
@@ -144,17 +144,18 @@ export async function POST(request: Request) {
 
     if (payload.entity === "opportunities") {
       const stage = String(values.stage ?? "");
-      const sentDate = String(values.sentDate ?? "");
-      const acceptedDate = String(values.acceptedDate ?? "");
-      const contractDate = String(values.contractDate ?? "");
+      const sentDate = String(values.sentDate ?? "").trim();
+      const acceptedDate = String(values.acceptedDate ?? "").trim();
+      const contractDate = String(values.contractDate ?? "").trim();
       if (!["Proposta enviada", "Negociação", "Contratada", "Encerrada"].includes(stage)) return Response.json({ error: "Selecione uma etapa válida para a oportunidade." }, { status: 400 });
-      if (contractDate && stage !== "Contratada") return Response.json({ error: "A conclusão da contratação só pode ser informada para oportunidades contratadas." }, { status: 400 });
       const negotiationDays = elapsedDays(sentDate, acceptedDate);
       const contractingDays = elapsedDays(acceptedDate, contractDate);
-      if (acceptedDate && !sentDate) return Response.json({ error: "Informe a data de envio antes do aceite/recusa." }, { status: 400 });
-      if (negotiationDays < 0) return Response.json({ error: "A data de aceite/recusa não pode ser anterior ao envio." }, { status: 400 });
-      if (contractDate && !acceptedDate) return Response.json({ error: "Informe a data de aceite antes da contratação." }, { status: 400 });
-      if (contractingDays < 0) return Response.json({ error: "A contratação não pode ser anterior ao aceite." }, { status: 400 });
+      if (sentDate && acceptedDate && negotiationDays < 0) return Response.json({ error: "A data de aceite/recusa não pode ser anterior ao envio." }, { status: 400 });
+      if (acceptedDate && contractDate && contractingDays < 0) return Response.json({ error: "A contratação não pode ser anterior ao aceite." }, { status: 400 });
+      values.sentDate = sentDate;
+      values.acceptedDate = acceptedDate;
+      values.contractDate = contractDate;
+      values.projectCode = String(values.projectCode ?? "").trim();
       values.negotiationDays = Math.max(0, negotiationDays);
       values.contractingDays = Math.max(0, contractingDays);
       const averageDays = await averageContractingDays();
