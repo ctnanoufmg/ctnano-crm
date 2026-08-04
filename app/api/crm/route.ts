@@ -73,14 +73,27 @@ export async function POST(request: Request) {
   const auth = await requireCrmApiUser();
   if (auth.response || !auth.user) return auth.response;
   try {
-    const payload = await request.json() as { action?: "create" | "update"; entity?: CrmEntity; data?: Record<string, unknown> };
+    const payload = await request.json() as { action?: "create" | "update" | "delete"; entity?: CrmEntity; data?: Record<string, unknown> };
     if (!payload.action || !payload.entity || !entities.has(payload.entity) || !payload.data) return Response.json({ error: "Operação inválida." }, { status: 400 });
     if (["kpis", "users"].includes(payload.entity) && !requireAdmin(auth.user)) return Response.json({ error: "Somente administradores podem realizar esta operação." }, { status: 403 });
 
     const db = createAdminClient();
     const values = clean(payload.data);
     const id = Number(payload.data.id);
-    if (payload.action === "update" && !id) return Response.json({ error: "ID inválido." }, { status: 400 });
+    if (["update", "delete"].includes(payload.action) && !id) return Response.json({ error: "ID inválido." }, { status: 400 });
+
+    if (payload.action === "delete") {
+      if (payload.entity !== "kpis") return Response.json({ error: "A exclusão não está disponível para este cadastro." }, { status: 400 });
+      const { data: existing, error: lookupError } = await db.from("kpis").select("id,key,label").eq("id", id).maybeSingle();
+      if (lookupError) throw new Error(lookupError.message);
+      if (!existing) return Response.json({ error: "Indicador não encontrado." }, { status: 404 });
+      if (systemKpiMethods[existing.key] || !String(existing.key).startsWith("custom_")) {
+        return Response.json({ error: "Indicadores automáticos do sistema não podem ser excluídos." }, { status: 400 });
+      }
+      const { error } = await db.from("kpis").delete().eq("id", id);
+      if (error) throw new Error(error.message);
+      return Response.json({ ...await getSnapshot(), message: `Indicador “${existing.label}” excluído com sucesso.` });
+    }
 
     if (payload.entity === "users") {
       const fullName = String(values.fullName ?? "").trim();
