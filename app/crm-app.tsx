@@ -400,6 +400,24 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
     }
   }
 
+  async function deleteKpi(kpi: KPI) {
+    const confirmed = window.confirm(`Excluir o indicador “${kpi.label}”?\n\nEsta ação removerá definitivamente as metas e os valores cadastrados para esse indicador.`);
+    if (!confirmed) return;
+    try {
+      const response = await fetch("/api/crm", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "delete", entity: "kpis", data: { id: kpi.id } }),
+      });
+      const result = await response.json() as Snapshot & { error?: string; message?: string };
+      if (!response.ok) throw new Error(result.error ?? "Não foi possível excluir o indicador.");
+      setData(result);
+      notify(result.message ?? "Indicador excluído com sucesso.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Não foi possível excluir o indicador.");
+    }
+  }
+
   function openSuggestedActivity() {
     if (!activityPrompt) return;
     let draft: Record<string, unknown> = { type: "Follow-up", status: "Pendente", dueDate: "" };
@@ -524,7 +542,7 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
           {page === "projetos" && <Projects data={data} edit={(record) => setModal({ entity: "projects", record: record as unknown as Record<string, unknown> })} />}
           {page === "indicadores" && <Indicators data={data} metrics={indicatorMetrics} year={selectedKpiYear} setYear={setSelectedKpiYear} />}
           {page === "relatorios" && <Reports data={data} availableYears={availableYears} />}
-          {page === "configuracoes" && currentUser.isAdmin && <Settings data={data} canManageKpis={currentUser.isAdmin} addKpi={() => setModal({ entity: "kpis" })} editKpi={(record) => setModal({ entity: "kpis", record: record as unknown as Record<string, unknown> })} addUser={() => setModal({ entity: "users" })} editUser={(record) => setModal({ entity: "users", record: record as unknown as Record<string, unknown> })} onImport={async (file) => {
+          {page === "configuracoes" && currentUser.isAdmin && <Settings data={data} canManageKpis={currentUser.isAdmin} addKpi={() => setModal({ entity: "kpis" })} editKpi={(record) => setModal({ entity: "kpis", record: record as unknown as Record<string, unknown> })} deleteKpi={deleteKpi} addUser={() => setModal({ entity: "users" })} editUser={(record) => setModal({ entity: "users", record: record as unknown as Record<string, unknown> })} onImport={async (file) => {
             try {
               const payload = JSON.parse(await file.text());
               const response = await fetch("/api/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
@@ -942,10 +960,10 @@ function Reports({ data, availableYears }: { data: Snapshot; availableYears: num
   </div>;
 }
 
-function Settings({ data, onBackup, onImport, addKpi, editKpi, addUser, editUser, canManageKpis }: { data: Snapshot; onBackup: () => void; onImport: (file: File) => void; addKpi: () => void; editKpi: (record: KPI) => void; addUser: () => void; editUser: (record: CRMUser) => void; canManageKpis: boolean }) {
+function Settings({ data, onBackup, onImport, addKpi, editKpi, deleteKpi, addUser, editUser, canManageKpis }: { data: Snapshot; onBackup: () => void; onImport: (file: File) => void; addKpi: () => void; editKpi: (record: KPI) => void; deleteKpi: (record: KPI) => void; addUser: () => void; editUser: (record: CRMUser) => void; canManageKpis: boolean }) {
   const totalWeight = data.kpis.reduce((sum, kpi) => sum + (Number(kpi.weight) || 0), 0);
   return <div className="settings-grid">
-    <section className="panel list-panel kpi-settings"><div className="list-toolbar"><div><p className="eyebrow">Indicadores</p><h3>Cadastro de indicadores</h3><small>{data.kpis.length} indicadores · soma dos pesos {number.format(totalWeight)} · {canManageKpis ? "acesso administrativo" : "somente leitura"}</small></div>{canManageKpis && <button className="primary-button compact" onClick={addKpi}>＋ Novo indicador</button>}</div><DataTable headers={["Indicador", "Responsável", "Forma de apuração", "Unidade", "Direção", "Peso", "Metas anuais", "No Painel", ""]} rows={data.kpis.map((kpi) => [<strong key="name">{kpi.label}</strong>, responsibleName(data, kpi.responsibleUserId), kpi.measurementMethod, kpi.unit, kpi.direction, number.format(kpi.weight), annualTargets(kpi).filter((item) => item.year >= currentYear()).sort((a, b) => a.year - b.year).map((item) => `${item.year}: ${formatKpiValue(item.target, kpi.unit)}`).join(" · ") || "—", <Status key="dashboard" value={isShownOnDashboard(kpi) ? "Sim" : "Não"} />, canManageKpis ? <button key="edit" className="row-action" onClick={() => editKpi(kpi)}>Editar</button> : <span key="locked" className="locked-label">Administrador</span>])} /></section>
+    <section className="panel list-panel kpi-settings"><div className="list-toolbar"><div><p className="eyebrow">Indicadores</p><h3>Cadastro de indicadores</h3><small>{data.kpis.length} indicadores · soma dos pesos {number.format(totalWeight)} · {canManageKpis ? "acesso administrativo" : "somente leitura"}</small></div>{canManageKpis && <button className="primary-button compact" onClick={addKpi}>＋ Novo indicador</button>}</div><DataTable headers={["Indicador", "Responsável", "Forma de apuração", "Unidade", "Direção", "Peso", "Metas anuais", "No Painel", ""]} rows={data.kpis.map((kpi) => [<strong key="name">{kpi.label}</strong>, responsibleName(data, kpi.responsibleUserId), kpi.measurementMethod, kpi.unit, kpi.direction, number.format(kpi.weight), annualTargets(kpi).filter((item) => item.year >= currentYear()).sort((a, b) => a.year - b.year).map((item) => `${item.year}: ${formatKpiValue(item.target, kpi.unit)}`).join(" · ") || "—", <Status key="dashboard" value={isShownOnDashboard(kpi) ? "Sim" : "Não"} />, canManageKpis ? <div className="row-actions" key="actions"><button className="row-action" onClick={() => editKpi(kpi)}>Editar</button>{kpi.key.startsWith("custom_") && <button className="row-action danger-action" onClick={() => deleteKpi(kpi)}>Excluir</button>}</div> : <span key="locked" className="locked-label">Administrador</span>])} /></section>
     {canManageKpis && <section className="panel settings-card"><div className="settings-icon">G</div><div><p className="eyebrow">Integração</p><h3>Backup no Google Drive</h3><p>Gere uma cópia JSON completa dos usuários, organizações, contatos, oportunidades, atividades, projetos e metas. O arquivo é enviado à pasta configurada no Drive.</p></div><button className="primary-button" onClick={onBackup}>Criar backup agora</button><div className="backup-history"><strong>Histórico recente</strong>{data.backups.length ? data.backups.slice(0, 5).map((backup) => <div key={backup.id}><span className="success-dot" /><div><strong>{backup.fileName}</strong><small>{new Date(backup.createdAt).toLocaleString("pt-BR")}</small></div><Status value={backup.status} /></div>) : <p>Nenhum backup registrado nesta instância.</p>}</div></section>}
     <section className="panel settings-card"><div className="settings-icon">⇩</div><div><p className="eyebrow">Portabilidade</p><h3>Exportar ou importar</h3><p>Exporte todos os dados comerciais para Excel. O backup e a importação integral ficam restritos aos administradores.</p></div><a className="primary-button full center" href="/api/export-excel">Exportar dados para Excel</a>{canManageKpis && <><a className="secondary-button full center" href="/api/export">Baixar backup JSON</a><label className="secondary-button full file-button">Importar arquivo JSON<input type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.target.value = ""; }} /></label></>}</section>
     <section className="panel list-panel team-settings"><div className="list-toolbar"><div><p className="eyebrow">Equipe</p><h3>Cadastro de usuários</h3><small>{data.users.length} usuários cadastrados · acesso exclusivo para @ctnano.org</small></div>{canManageKpis && <button className="primary-button compact" onClick={addUser}>＋ Novo usuário</button>}</div><DataTable headers={["Usuário", "E-mail", "Telefone", "Perfil", "Status", ""]} rows={data.users.map((user) => [<div className="user-cell" key={user.id}><span>{user.fullName.split(" ").slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span><strong>{user.fullName}</strong></div>, user.email, user.phone || "—", <Status key="role" value={user.role === "admin" ? "Administrador" : "Usuário"} />, <Status key="status" value={user.active ? "Ativo" : "Inativo"} />, canManageKpis ? <button key="edit" className="row-action" onClick={() => editUser(user)}>Editar</button> : <span key="locked" className="locked-label">Administrador</span>])} /></section>
