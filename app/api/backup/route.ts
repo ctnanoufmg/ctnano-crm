@@ -19,25 +19,52 @@ async function googleAccessToken(clientEmail: string, privateKey: string) {
   return result.access_token;
 }
 
+async function appsScriptBackup(webAppUrl: string, token: string, fileName: string, content: string) {
+  const response = await fetch(webAppUrl, {
+    method: "POST",
+    redirect: "follow",
+    headers: { "content-type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ token, fileName, content }),
+  });
+  const result = await response.json().catch(() => null) as { ok?: boolean; id?: string; name?: string; error?: string } | null;
+  if (!response.ok || !result?.ok || !result.id || !result.name) {
+    throw new Error(result?.error ? `Não foi possível enviar o arquivo ao Google Drive: ${result.error}` : "Não foi possível enviar o arquivo ao Google Drive.");
+  }
+  return { id: result.id, name: result.name };
+}
+
 export async function POST() {
   const auth = await requireCrmApiUser();
   if (auth.response || !auth.user) return auth.response;
   if (!requireAdmin(auth.user)) return Response.json({ error: "Somente administradores podem criar backups." }, { status: 403 });
+  const webAppUrl = process.env.GDRIVE_WEB_APP_URL;
+  const backupToken = process.env.GDRIVE_BACKUP_TOKEN;
   const clientEmail = process.env.GDRIVE_CLIENT_EMAIL;
   const privateKey = process.env.GDRIVE_PRIVATE_KEY;
   const folderId = process.env.GDRIVE_FOLDER_ID;
-  if (!clientEmail || !privateKey || !folderId) return Response.json({ error: "A integração com o Google Drive ainda não foi configurada." }, { status: 412 });
+  const appsScriptConfigured = Boolean(webAppUrl && backupToken);
+  const serviceAccountConfigured = Boolean(clientEmail && privateKey && folderId);
+  if (!appsScriptConfigured && !serviceAccountConfigured) return Response.json({ error: "A integração com o Google Drive ainda não foi configurada." }, { status: 412 });
   try {
     const snapshot = await getSnapshot();
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const fileName = `ctnano-crm-backup-${stamp}.json`;
     const body = JSON.stringify({ exportedAt: new Date().toISOString(), product: "CTNano CRM", version: 3, data: snapshot }, null, 2);
-    const token = await googleAccessToken(clientEmail, privateKey);
-    const boundary = `ctnano_${crypto.randomUUID()}`;
-    const multipart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: fileName, parents: [folderId], mimeType: "application/json" })}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
-    const upload = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": `multipart/related; boundary=${boundary}` }, body: multipart });
-    if (!upload.ok) throw new Error("Não foi possível enviar o arquivo ao Google Drive.");
-    const file = await upload.json() as { id: string; name: string };
+    let file: { id: string; name: string };
+    if (webAppUrl && backupToken) {
+      file = await appsScriptBackup(webAppUrl, backupToken, fileName, body);
+    } else {
+      const token = await googleAccessToken(clientEmail!, privateKey!);
+      const boundary = `ctnano_${crypto.randomUUID()}`;
+      const multipart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: fileName, parents: [folderId], mimeType: "application/json" })}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
+      const upload = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": `multipart/related; boundary=${boundary}` }, body: multipart });
+      const uploadResult = await upload.json().catch(() => null) as { id?: string; name?: string; error?: { message?: string } } | null;
+      if (!upload.ok || !uploadResult?.id || !uploadResult.name) {
+        const detail = uploadResult?.error?.message;
+        throw new Error(detail ? `Não foi possível enviar o arquivo ao Google Drive: ${detail}` : "Não foi possível enviar o arquivo ao Google Drive.");
+      }
+      file = { id: uploadResult.id, name: uploadResult.name };
+    }
     const db = createAdminClient();
     const { error } = await db.from("backups").insert({ status: "Sucesso", file_name: file.name, drive_file_id: file.id });
     if (error) throw new Error(error.message);
