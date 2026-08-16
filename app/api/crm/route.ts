@@ -3,8 +3,18 @@ import { requireAdmin, requireCrmApiUser } from "../../../lib/auth";
 import { createAdminClient } from "../../../lib/supabase/admin";
 
 const entities = new Set<CrmEntity>(["users", "companies", "contacts", "opportunities", "activities", "projects", "kpis"]);
+const actions = new Set(["create", "update", "delete"]);
 const responsibleEntities = new Set<CrmEntity>(["companies", "contacts", "opportunities", "activities", "projects", "kpis"]);
 const ADMIN_EMAIL = "ricardo.neres@ctnano.org";
+const entityLabels: Record<CrmEntity, string> = {
+  users: "Usuário",
+  companies: "Organização",
+  contacts: "Contato",
+  opportunities: "Oportunidade",
+  activities: "Atividade",
+  projects: "Projeto",
+  kpis: "Indicador",
+};
 
 const systemKpiMethods: Record<string, string> = {
   mapped_companies: "Organizações do tipo Empresa cadastradas no ano",
@@ -74,8 +84,8 @@ export async function POST(request: Request) {
   if (auth.response || !auth.user) return auth.response;
   try {
     const payload = await request.json() as { action?: "create" | "update" | "delete"; entity?: CrmEntity; data?: Record<string, unknown> };
-    if (!payload.action || !payload.entity || !entities.has(payload.entity) || !payload.data) return Response.json({ error: "Operação inválida." }, { status: 400 });
-    if (["kpis", "users"].includes(payload.entity) && !requireAdmin(auth.user)) return Response.json({ error: "Somente administradores podem realizar esta operação." }, { status: 403 });
+    if (!payload.action || !actions.has(payload.action) || !payload.entity || !entities.has(payload.entity) || !payload.data) return Response.json({ error: "Operação inválida." }, { status: 400 });
+    if ((payload.action === "delete" || ["kpis", "users"].includes(payload.entity)) && !requireAdmin(auth.user)) return Response.json({ error: "Somente administradores podem realizar esta operação." }, { status: 403 });
 
     const db = createAdminClient();
     const values = clean(payload.data);
@@ -83,16 +93,44 @@ export async function POST(request: Request) {
     if (["update", "delete"].includes(payload.action) && !id) return Response.json({ error: "ID inválido." }, { status: 400 });
 
     if (payload.action === "delete") {
-      if (payload.entity !== "kpis") return Response.json({ error: "A exclusão não está disponível para este cadastro." }, { status: 400 });
-      const { data: existing, error: lookupError } = await db.from("kpis").select("id,key,label").eq("id", id).maybeSingle();
+      const table = entityTables[payload.entity];
+      const { data: existing, error: lookupError } = await db.from(table).select("*").eq("id", id).maybeSingle();
       if (lookupError) throw new Error(lookupError.message);
-      if (!existing) return Response.json({ error: "Indicador não encontrado." }, { status: 404 });
-      if (systemKpiMethods[existing.key] || !String(existing.key).startsWith("custom_")) {
+      if (!existing) return Response.json({ error: `${entityLabels[payload.entity]} não encontrado.` }, { status: 404 });
+
+      if (payload.entity === "kpis" && (systemKpiMethods[String(existing.key)] || !String(existing.key).startsWith("custom_"))) {
         return Response.json({ error: "Indicadores automáticos do sistema não podem ser excluídos." }, { status: 400 });
       }
-      const { error } = await db.from("kpis").delete().eq("id", id);
+
+      if (payload.entity === "users") {
+        const email = String(existing.email ?? "").toLowerCase();
+        if (email === ADMIN_EMAIL) return Response.json({ error: "O administrador principal do sistema não pode ser excluído." }, { status: 400 });
+        if (id === auth.user.id) return Response.json({ error: "Você não pode excluir o seu próprio usuário." }, { status: 400 });
+      }
+
+      if (payload.entity === "companies") {
+        const linkedResults = await Promise.all([
+          db.from("contacts").select("id", { count: "exact", head: true }).eq("company_id", id),
+          db.from("opportunities").select("id", { count: "exact", head: true }).eq("company_id", id),
+          db.from("projects").select("id", { count: "exact", head: true }).eq("company_id", id),
+        ]);
+        const linkedError = linkedResults.find((result) => result.error)?.error;
+        if (linkedError) throw new Error(linkedError.message);
+        const [contacts, opportunities, projects] = linkedResults.map((result) => result.count ?? 0);
+        if (contacts || opportunities || projects) {
+          const links = [contacts && `${contacts} contato(s)`, opportunities && `${opportunities} oportunidade(s)`, projects && `${projects} projeto(s)`].filter(Boolean).join(", ");
+          return Response.json({ error: `Esta organização possui registros vinculados (${links}). Exclua esses registros primeiro para preservar a integridade do histórico.` }, { status: 409 });
+        }
+      }
+
+      const authUserId = payload.entity === "users" ? String(existing.auth_user_id ?? "") : "";
+      const { error } = await db.from(table).delete().eq("id", id);
       if (error) throw new Error(error.message);
-      return Response.json({ ...await getSnapshot(), message: `Indicador “${existing.label}” excluído com sucesso.` });
+      if (authUserId) {
+        const { error: authDeleteError } = await db.auth.admin.deleteUser(authUserId);
+        if (authDeleteError) return Response.json({ ...await getSnapshot(), message: `O acesso ao CRM foi removido. A conta de autenticação não pôde ser apagada automaticamente e pode ser removida em Authentication > Users no Supabase: ${authDeleteError.message}` });
+      }
+      return Response.json({ ...await getSnapshot(), message: `${entityLabels[payload.entity]} excluído com sucesso.` });
     }
 
     if (payload.entity === "users") {
