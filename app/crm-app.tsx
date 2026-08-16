@@ -70,6 +70,8 @@ const systemKpiMethods: Record<string, string> = {
   mpe_startup: "Startups/MPEs contratantes no ano",
   average_negotiation_time: "Tempo médio de negociação concluída no ano",
   average_contracting_time: "Tempo médio de contratação concluída no ano",
+  average_opportunity_registration_time: "Tempo médio entre envio da proposta e cadastro no CRM",
+  average_prospecting_registration_time: "Tempo médio entre prospecção e cadastro no CRM",
 };
 const measurementMethods = ["Apuração manual", "Organizações do tipo Empresa cadastradas no ano", ...Array.from(new Set(Object.values(systemKpiMethods)))];
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
@@ -138,6 +140,14 @@ function annualCycleTimes(opportunities: Opportunity[]) {
   });
 }
 
+function averageRegistrationTime<T extends { createdAt?: string }>(items: T[], sourceDate: (item: T) => string | undefined, range: DateRange) {
+  const durations = items
+    .filter((item) => inRange(item.createdAt, range))
+    .map((item) => elapsedDays(sourceDate(item), item.createdAt))
+    .filter((days): days is number => days !== null);
+  return durations.length ? Math.round(durations.reduce((sum, days) => sum + days, 0) / durations.length) : 0;
+}
+
 function annualProgress(year: number) {
   const today = parseDate(localToday());
   const currentYear = today.getUTCFullYear();
@@ -173,6 +183,8 @@ function kpiActual(kpi: KPI, data: Snapshot, metrics: Metrics, year: number) {
     case "Startups/MPEs contratantes no ano": return metrics.mpeStartup;
     case "Tempo médio de negociação concluída no ano": return annualCycleTimes(data.opportunities).find((item) => item.year === year)?.negotiation ?? 0;
     case "Tempo médio de contratação concluída no ano": return annualCycleTimes(data.opportunities).find((item) => item.year === year)?.contracting ?? 0;
+    case "Tempo médio entre envio da proposta e cadastro no CRM": return averageRegistrationTime(data.opportunities, (item) => item.sentDate, rangeForYear(year));
+    case "Tempo médio entre prospecção e cadastro no CRM": return averageRegistrationTime(data.contacts, (item) => item.prospectingDate, rangeForYear(year));
     default: return annualTarget(kpi, year)?.manualActual ?? 0;
   }
 }
@@ -320,6 +332,8 @@ const fallback: Snapshot = {
     { id: 8, key: "satisfaction", label: "Satisfação das empresas", unit: "Unidade", direction: "Quanto maior, melhor", weight: 3, measurementMethod: "Apuração manual", manualActual2026: 0, manualActual2027: 0, manualActual2028: 0, target2026: 8, target2027: 8, target2028: 8 },
     { id: 9, key: "average_negotiation_time", label: "Tempo médio de negociação", unit: "Outro", direction: "Quanto menor, melhor", weight: 3, measurementMethod: "Tempo médio de negociação concluída no ano", manualActual2026: 0, manualActual2027: 0, manualActual2028: 0, target2026: 0, target2027: 0, target2028: 0 },
     { id: 10, key: "average_contracting_time", label: "Tempo médio de contratação", unit: "Outro", direction: "Quanto menor, melhor", weight: 3, measurementMethod: "Tempo médio de contratação concluída no ano", manualActual2026: 0, manualActual2027: 0, manualActual2028: 0, target2026: 0, target2027: 0, target2028: 0 },
+    { id: 11, key: "average_opportunity_registration_time", label: "Tempo médio de cadastro de oportunidades", unit: "Outro", direction: "Quanto menor, melhor", weight: 3, measurementMethod: "Tempo médio entre envio da proposta e cadastro no CRM", showOnDashboard: false, manualActual2026: 0, manualActual2027: 0, manualActual2028: 0, target2026: 0, target2027: 0, target2028: 0 },
+    { id: 12, key: "average_prospecting_registration_time", label: "Tempo médio de cadastro de prospecções", unit: "Outro", direction: "Quanto menor, melhor", weight: 3, measurementMethod: "Tempo médio entre prospecção e cadastro no CRM", showOnDashboard: false, manualActual2026: 0, manualActual2027: 0, manualActual2028: 0, target2026: 0, target2027: 0, target2028: 0 },
   ],
   backups: [],
   insights: { averageContractingDays: 48 },
@@ -759,9 +773,8 @@ function AnnualCycleTimeChart({ items }: { items: ReturnType<typeof annualCycleT
 function CommercialFunnel({ metrics }: { metrics: Metrics }) {
   const items = [
     { label: "Empresas mapeadas", value: metrics.mapped, icon: "◎", color: "#ea6a26", width: 100 },
-    { label: "Empresas prospectadas", value: metrics.prospected, icon: "▦", color: "#f1c93b", width: 88 },
-    { label: "Propostas técnicas", value: metrics.proposals, icon: "▤", color: "#1d67ad", width: 76 },
-    { label: "Negociações avançadas", value: metrics.advancedNegotiations, icon: "⇄", color: "#338fc5", width: 64 },
+    { label: "Empresas prospectadas", value: metrics.prospected, icon: "▦", color: "#f1c93b", width: 84 },
+    { label: "Propostas técnicas", value: metrics.proposals, icon: "▤", color: "#1d67ad", width: 68 },
     { label: "Projetos contratados", value: metrics.contracted, icon: "✓", color: "#43b9a2", width: 52 },
   ];
   return <div className="commercial-funnel" role="img" aria-label={`Funil comercial: ${items.map((item) => `${item.label}, ${item.value}`).join("; ")}`}>
@@ -893,6 +906,8 @@ function Reports({ data, availableYears }: { data: Snapshot; availableYears: num
       case "Startups/MPEs contratantes no ano": return metrics.mpeStartup;
       case "Tempo médio de negociação concluída no ano": return averageForRange("sentDate", "acceptedDate");
       case "Tempo médio de contratação concluída no ano": return averageForRange("acceptedDate", "contractDate");
+      case "Tempo médio entre envio da proposta e cadastro no CRM": return averageRegistrationTime(data.opportunities, (item) => item.sentDate, range);
+      case "Tempo médio entre prospecção e cadastro no CRM": return averageRegistrationTime(data.contacts, (item) => item.prospectingDate, range);
       default: return periodYear ? annualTarget(kpi, periodYear)?.manualActual ?? 0 : 0;
     }
   };
