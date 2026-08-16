@@ -25,6 +25,8 @@ const systemKpiMethods: Record<string, string> = {
   mpe_startup: "Startups/MPEs contratantes no ano",
   average_negotiation_time: "Tempo médio de negociação concluída no ano",
   average_contracting_time: "Tempo médio de contratação concluída no ano",
+  average_opportunity_registration_time: "Tempo médio entre envio da proposta e cadastro no CRM",
+  average_prospecting_registration_time: "Tempo médio entre prospecção e cadastro no CRM",
 };
 
 function clean(values: Record<string, unknown>) {
