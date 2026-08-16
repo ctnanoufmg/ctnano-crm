@@ -205,7 +205,9 @@ insert into public.kpis (key, label, unit, direction, weight, measurement_method
   ('pi_requests', 'Pedidos de PI', 'Unidade', 'Quanto maior, melhor', 3, 'Apuração manual', false, '[{"year":2026,"target":3,"manualActual":0},{"year":2027,"target":3,"manualActual":0},{"year":2028,"target":4,"manualActual":0}]', 3, 3, 4),
   ('satisfaction', 'Satisfação das empresas', 'Unidade', 'Quanto maior, melhor', 3, 'Apuração manual', false, '[{"year":2026,"target":8,"manualActual":0},{"year":2027,"target":8,"manualActual":0},{"year":2028,"target":8,"manualActual":0}]', 8, 8, 8),
   ('average_negotiation_time', 'Tempo médio de negociação', 'Outro', 'Quanto menor, melhor', 3, 'Tempo médio de negociação concluída no ano', false, '[]', 0, 0, 0),
-  ('average_contracting_time', 'Tempo médio de contratação', 'Outro', 'Quanto menor, melhor', 3, 'Tempo médio de contratação concluída no ano', false, '[]', 0, 0, 0)
+  ('average_contracting_time', 'Tempo médio de contratação', 'Outro', 'Quanto menor, melhor', 3, 'Tempo médio de contratação concluída no ano', false, '[]', 0, 0, 0),
+  ('average_opportunity_registration_time', 'Tempo médio de cadastro de oportunidades', 'Outro', 'Quanto menor, melhor', 3, 'Tempo médio entre envio da proposta e cadastro no CRM', false, '[]', 0, 0, 0),
+  ('average_prospecting_registration_time', 'Tempo médio de cadastro de prospecções', 'Outro', 'Quanto menor, melhor', 3, 'Tempo médio entre prospecção e cadastro no CRM', false, '[]', 0, 0, 0)
 on conflict (key) do nothing;
 
 create or replace function public.is_active_ctnano_user()
