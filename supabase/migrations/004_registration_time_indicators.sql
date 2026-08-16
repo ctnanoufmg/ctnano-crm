@@ -24,8 +24,8 @@ values
     3,
     'Tempo médio entre envio da proposta e cadastro no CRM',
     false,
-    '[]'::jsonb,
-    0, 0, 0,
+    '[{"year":2026,"target":2,"manualActual":0},{"year":2027,"target":2,"manualActual":0},{"year":2028,"target":2,"manualActual":0},{"year":2029,"target":2,"manualActual":0},{"year":2030,"target":2,"manualActual":0}]'::jsonb,
+    2, 2, 2,
     0, 0, 0
   ),
   (
@@ -36,8 +36,8 @@ values
     3,
     'Tempo médio entre prospecção e cadastro no CRM',
     false,
-    '[]'::jsonb,
-    0, 0, 0,
+    '[{"year":2026,"target":2,"manualActual":0},{"year":2027,"target":2,"manualActual":0},{"year":2028,"target":2,"manualActual":0},{"year":2029,"target":2,"manualActual":0},{"year":2030,"target":2,"manualActual":0}]'::jsonb,
+    2, 2, 2,
     0, 0, 0
   )
 on conflict (key) do nothing;
