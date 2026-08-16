@@ -18,7 +18,7 @@ const fieldMaps: Record<CrmEntity, Record<string, string>> = {
   contacts: { companyId: "company_id", name: "name", email: "email", phone: "phone", role: "role", prospectingDate: "prospecting_date", source: "source", responsibleUserId: "responsible_user_id" },
   opportunities: { companyId: "company_id", sourceCode: "source_code", projectCode: "project_code", title: "title", stage: "stage", sourceStatus: "source_status", lossReason: "loss_reason", origin: "origin", technicalTeam: "technical_team", modality: "modality", totalValue: "total_value", companyValue: "company_value", economicValue: "economic_value", embrapiiValue: "embrapii_value", probability: "probability", owner: "owner", responsibleUserId: "responsible_user_id", uf: "uf", proposalDate: "proposal_date", sentDate: "sent_date", acceptedDate: "accepted_date", contractDate: "contract_date", negotiationDays: "negotiation_days", contractingDays: "contracting_days", nextStep: "next_step", dueDate: "due_date" },
   activities: { opportunityId: "opportunity_id", companyId: "company_id", type: "type", title: "title", dueDate: "due_date", owner: "owner", responsibleUserId: "responsible_user_id", status: "status", notes: "notes" },
-  projects: { opportunityId: "opportunity_id", companyId: "company_id", name: "name", status: "status", startDate: "start_date", endDate: "end_date", manager: "manager", responsibleUserId: "responsible_user_id", handoverProgress: "handover_progress", totalValue: "total_value" },
+  projects: { opportunityId: "opportunity_id", companyId: "company_id", name: "name", status: "status", startDate: "start_date", endDate: "end_date", manager: "manager", responsibleUserId: "responsible_user_id", handoffProgress: "handover_progress", totalValue: "total_value" },
   kpis: { key: "key", label: "label", unit: "unit", direction: "direction", weight: "weight", measurementMethod: "measurement_method", responsibleUserId: "responsible_user_id", showOnDashboard: "show_on_dashboard", targets: "targets", manualActual2026: "manual_actual_2026", manualActual2027: "manual_actual_2027", manualActual2028: "manual_actual_2028", target2026: "target_2026", target2027: "target_2027", target2028: "target_2028" },
 };
 
@@ -35,6 +35,7 @@ function mapRow(entity: CrmEntity, row: Record<string, unknown>) {
     result.active = Boolean(row.active);
     result.role = row.role === "admin" ? "admin" : "user";
   }
+  if (entity === "projects" && String(result.status).toLowerCase() === "handover") result.status = "Handoff";
   if (entity === "kpis") result.showOnDashboard = Boolean(row.show_on_dashboard);
   return result;
 }
@@ -60,11 +61,11 @@ export async function getSnapshot() {
   const db = createAdminClient();
   const results = await Promise.all([
     db.from("crm_users").select("*").order("full_name"),
-    db.from("companies").select("*").order("mapping_date", { ascending: false }).order("id", { ascending: false }),
+    db.from("companies").select("*").order("created_at", { ascending: false }).order("id", { ascending: false }),
     db.from("contacts").select("*").order("created_at", { ascending: false }).order("id", { ascending: false }),
-    db.from("opportunities").select("*").order("updated_at", { ascending: false }).order("id", { ascending: false }),
-    db.from("activities").select("*").order("due_date").order("id", { ascending: false }),
-    db.from("projects").select("*").order("id", { ascending: false }),
+    db.from("opportunities").select("*").order("created_at", { ascending: false }).order("id", { ascending: false }),
+    db.from("activities").select("*").order("created_at", { ascending: false }).order("id", { ascending: false }),
+    db.from("projects").select("*").order("created_at", { ascending: false }).order("id", { ascending: false }),
     db.from("kpis").select("*").order("id"),
     db.from("backups").select("*").order("id", { ascending: false }).limit(10),
   ]);
