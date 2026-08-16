@@ -99,7 +99,7 @@ create table if not exists public.projects (
   opportunity_id bigint references public.opportunities(id) on delete set null,
   company_id bigint not null references public.companies(id) on delete restrict,
   name text not null,
-  status text not null default 'Handover',
+  status text not null default 'Handoff',
   start_date date,
   end_date date,
   manager text not null default '',
