@@ -39,9 +39,12 @@ Depois da primeira publicação na Vercel, acrescente:
 
 ```text
 https://SEU-ENDERECO-VERCEL.vercel.app/auth/callback
+https://SEU-ENDERECO-VERCEL.vercel.app/auth/recuperar-senha/callback
 ```
 
 e altere o **Site URL** para o endereço definitivo.
+
+As duas URLs devem ser cadastradas exatamente como acima. A segunda é usada pelo fluxo de recuperação de senha.
 
 ## 4. Obter as três variáveis do Supabase
 

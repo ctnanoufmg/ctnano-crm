@@ -4,7 +4,20 @@ import LoginForm from "./login-form";
 
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage() {
+type LoginPageProps = {
+  searchParams: Promise<{ erro?: string; mensagem?: string }>;
+};
+
+export default async function LoginPage({ searchParams }: LoginPageProps) {
   if (await getCrmSessionUser()) redirect("/");
-  return <LoginForm />;
+  const { erro, mensagem } = await searchParams;
+  const initialError = erro === "recuperacao-invalida"
+    ? "O link de recuperação é inválido ou expirou."
+    : erro === "link-invalido"
+      ? "Link inválido ou expirado."
+      : "";
+  const initialMessage = mensagem === "senha-atualizada"
+    ? "Senha atualizada com sucesso. Entre com a nova senha."
+    : "";
+  return <LoginForm initialError={initialError} initialMessage={initialMessage} />;
 }
