@@ -37,7 +37,7 @@ export default function LoginForm({ initialError = "", initialMessage = "" }: Lo
     const fullName = String(form.get("fullName") ?? "").trim();
     const phone = String(form.get("phone") ?? "").trim();
 
-    if (!email.endsWith("@ctnano.org")) {
+    if (mode === "signup" && !email.endsWith("@ctnano.org")) {
       setError("Use seu e-mail institucional @ctnano.org.");
       setLoading(false);
       return;
@@ -91,14 +91,14 @@ export default function LoginForm({ initialError = "", initialMessage = "" }: Lo
         <p className="eyebrow">Acesso institucional</p>
         {mode === "signup" && <h1>Criar uma conta</h1>}
         {mode === "recovery" && <h1>Recuperar senha</h1>}
-        <p className="login-copy">{mode === "recovery" ? "Informe seu e-mail institucional para receber o link de redefinição." : "Acesso exclusivo com e-mail institucional CTNano/UFMG"}</p>
+        <p className="login-copy">{mode === "recovery" ? "Informe o e-mail da sua conta para receber o link de redefinição." : "Equipe CTNano e auditores cadastrados pelo administrador."}</p>
       </div>
       <form onSubmit={submit}>
         {mode === "signup" && <>
           <label><span>Nome completo *</span><input name="fullName" autoComplete="name" required /></label>
           <label><span>Telefone</span><input name="phone" type="tel" autoComplete="tel" /></label>
         </>}
-        <label><span>E-mail institucional *</span><input name="email" type="email" autoComplete="email" placeholder="nome@ctnano.org" required /></label>
+        <label><span>{mode === "signup" ? "E-mail institucional" : "E-mail"} *</span><input name="email" type="email" autoComplete="email" placeholder={mode === "signup" ? "nome@ctnano.org" : "E-mail cadastrado"} required /></label>
         {mode !== "recovery" && <label><span>Senha *</span><input name="password" type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={8} required /></label>}
         {error && <p className="login-error" role="alert">{error}</p>}
         {message && <p className="login-success" role="status">{message}</p>}
@@ -111,7 +111,7 @@ export default function LoginForm({ initialError = "", initialMessage = "" }: Lo
         </>}
         {mode !== "login" && <button type="button" className="login-switch" onClick={() => changeMode("login")}>Voltar para o acesso</button>}
       </div>
-      <small className="login-note">O perfil administrativo é atribuído somente por Ricardo Neres ou por outro administrador autorizado.</small>
+      <small className="login-note">Auditores externos precisam ser cadastrados por um administrador e possuem acesso somente para visualização. O cadastro público é exclusivo para @ctnano.org.</small>
     </section>
   </main>;
 }

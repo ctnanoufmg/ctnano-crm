@@ -1,6 +1,7 @@
 import { getSnapshot, entityTables, toDatabase, type CrmEntity } from "../../../db/crm";
 import { requireAdmin, requireCrmApiUser } from "../../../lib/auth";
 import { createAdminClient } from "../../../lib/supabase/admin";
+import { canWriteCrm, isAllowedProfileEmail, isCrmRole } from "../../../lib/access";
 
 const entities = new Set<CrmEntity>(["users", "companies", "contacts", "opportunities", "activities", "projects", "kpis"]);
 const actions = new Set(["create", "update", "delete"]);
@@ -77,13 +78,14 @@ async function averageContractingDays() {
 export async function GET() {
   const auth = await requireCrmApiUser();
   if (auth.response) return auth.response;
-  try { return Response.json(await getSnapshot()); }
+  try { return Response.json(await getSnapshot(), { headers: { "Cache-Control": "private, no-store" } }); }
   catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Erro ao carregar o CRM." }, { status: 500 }); }
 }
 
 export async function POST(request: Request) {
   const auth = await requireCrmApiUser();
   if (auth.response || !auth.user) return auth.response;
+  if (!canWriteCrm(auth.user.role)) return Response.json({ error: "O perfil Auditor permite somente visualização." }, { status: 403 });
   try {
     const payload = await request.json() as { action?: "create" | "update" | "delete"; entity?: CrmEntity; data?: Record<string, unknown> };
     if (!payload.action || !actions.has(payload.action) || !payload.entity || !entities.has(payload.entity) || !payload.data) return Response.json({ error: "Operação inválida." }, { status: 400 });
@@ -139,23 +141,27 @@ export async function POST(request: Request) {
       const fullName = String(values.fullName ?? "").trim();
       const email = String(values.email ?? "").trim().toLowerCase();
       const phone = String(values.phone ?? "").trim();
-      let role = values.role === "admin" ? "admin" : "user";
+      if (!isCrmRole(values.role)) return Response.json({ error: "Selecione um perfil de acesso válido." }, { status: 400 });
+      let role = values.role;
       let active = values.active !== false;
       if (!fullName) return Response.json({ error: "Informe o nome completo do usuário." }, { status: 400 });
-      if (!/^[^\s@]+@ctnano\.org$/i.test(email)) return Response.json({ error: "Somente e-mails @ctnano.org podem ser cadastrados." }, { status: 400 });
+      if (!isAllowedProfileEmail(email, role)) return Response.json({ error: "E-mails externos são permitidos somente no perfil Auditor." }, { status: 400 });
       if (email === ADMIN_EMAIL) { role = "admin"; active = true; }
       if (payload.action === "update" && id === auth.user.id && (role !== "admin" || !active)) return Response.json({ error: "Você não pode remover seu próprio acesso administrativo." }, { status: 400 });
 
       if (payload.action === "create") {
+        // Reserve the administrator-approved profile before the Auth trigger runs.
+        const { data: saved, error: reservationError } = await db.from("crm_users").insert({ full_name: fullName, email, phone, role, active }).select("id").single();
+        if (reservationError) return Response.json({ error: reservationError.code === "23505" ? "Este e-mail já está cadastrado. Edite o usuário existente." : reservationError.message }, { status: 400 });
         const redirectTo = `${new URL(request.url).origin}/auth/callback`;
         const { data: invitation, error: invitationError } = await db.auth.admin.inviteUserByEmail(email, { redirectTo, data: { full_name: fullName, phone } });
-        if (invitationError && !invitationError.message.toLowerCase().includes("already")) return Response.json({ error: `Não foi possível convidar o usuário: ${invitationError.message}` }, { status: 400 });
-        const authUserId = invitation.user?.id ?? null;
-        const profileValues: Record<string, unknown> = { full_name: fullName, email, phone, role, active };
-        if (authUserId) profileValues.auth_user_id = authUserId;
-        const { data: saved, error } = await db.from("crm_users").upsert(profileValues, { onConflict: "email" }).select("id").single();
-        if (error) throw new Error(error.message);
-        return Response.json({ ...await getSnapshot(), saved: { entity: payload.entity, id: saved.id } });
+        if (invitationError || !invitation.user) {
+          const { error: cleanupError } = await db.from("crm_users").delete().eq("id", saved.id).is("auth_user_id", null);
+          if (cleanupError) throw new Error("O convite falhou. Revise o cadastro pendente em Usuários antes de tentar novamente.");
+          return Response.json({ error: `Não foi possível convidar o usuário: ${invitationError?.message ?? "Conta não criada."}` }, { status: 400 });
+        }
+        // The trigger links Auth to the reserved profile without changing role or active.
+        return Response.json({ ...await getSnapshot(), message: "Usuário cadastrado. Convite enviado para definir a senha.", saved: { entity: payload.entity, id: saved.id } });
       }
 
       const { data: existing, error: existingError } = await db.from("crm_users").select("auth_user_id,email").eq("id", id).single();

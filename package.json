@@ -9,7 +9,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint . --ignore-pattern .next"
+    "lint": "eslint . --ignore-pattern .next",
+    "test:permissions": "node tests/permissions.test.cjs"
   },
   "dependencies": {
     "@supabase/ssr": "0.7.0",

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { canWriteCrm, type CrmRole } from "../lib/access";
 import { createSupabaseBrowserClient } from "../lib/supabase/client";
 import { createConfigurableReportExcel, type ReportExcelSection } from "../lib/excel-export";
 
@@ -9,7 +10,7 @@ type Entity = "users" | "companies" | "contacts" | "opportunities" | "activities
 type SortableEntity = "companies" | "contacts" | "opportunities" | "activities" | "projects";
 type SortDirection = "newest" | "oldest";
 
-type CRMUser = { id: number; fullName: string; email: string; phone: string; role: "admin" | "user"; active: boolean; createdAt?: string };
+type CRMUser = { id: number; fullName: string; email: string; phone: string; role: CrmRole; active: boolean; createdAt?: string };
 type Company = { id: number; tradeName: string; legalName: string; cnpj: string; organizationType: string; mappingDate: string; size: string; sector: string; uf: string; status: string; responsibleUserId?: number | null; createdAt?: string };
 type Contact = { id: number; companyId: number | null; name: string; email: string; phone: string; role: string; prospectingDate: string; source: string; responsibleUserId?: number | null; createdAt?: string };
 type Opportunity = { id: number; companyId: number; sourceCode?: string; projectCode?: string; title: string; stage: string; sourceStatus?: string; lossReason?: string; origin?: string; technicalTeam?: string; modality: string; totalValue: number; companyValue: number; economicValue?: number; embrapiiValue?: number; probability: number; owner: string; responsibleUserId?: number | null; uf?: string; proposalDate: string; sentDate: string; acceptedDate?: string; contractDate: string; negotiationDays?: number; contractingDays?: number; nextStep: string; dueDate: string; createdAt?: string };
@@ -362,7 +363,8 @@ function Icon({ children }: { children: React.ReactNode }) {
   return <span className="nav-icon" aria-hidden="true">{children}</span>;
 }
 
-export default function CRMApp({ currentUser }: { currentUser: { email: string; name: string; isAdmin: boolean } }) {
+export default function CRMApp({ currentUser }: { currentUser: { email: string; name: string; isAdmin: boolean; role: CrmRole } }) {
+  const canEdit = canWriteCrm(currentUser.role);
   const [page, setPage] = useState<Page>("dashboard");
   const [data, setData] = useState<Snapshot>(emptySnapshot);
   const [loading, setLoading] = useState(true);
@@ -388,9 +390,10 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
 
   useEffect(() => {
     let active = true;
-    fetch("/api/crm")
+    fetch("/api/crm", { cache: "no-store" })
       .then(async (response) => {
         if (response.ok) return response.json();
+        if (response.status === 401) window.location.replace("/login?erro=sem-acesso");
         const result = await response.json().catch(() => ({})) as { error?: string };
         throw new Error(result.error ?? "Não foi possível carregar os dados do CRM.");
       })
@@ -404,29 +407,52 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
     return () => { active = false; };
   }, [reloadToken]);
 
+  useEffect(() => {
+    let disposed = false;
+    async function checkAccess() {
+      try {
+        const response = await fetch("/api/session", { cache: "no-store" });
+        if (disposed) return;
+        if (response.status === 401) {
+          setData(emptySnapshot);
+          setModal(null);
+          window.location.replace("/login?erro=sem-acesso");
+        } else if (response.ok) {
+          const session = await response.json() as { role: CrmRole };
+          if (session.role !== currentUser.role) window.location.reload();
+        }
+      } catch { /* A temporary connection failure does not change permissions. */ }
+    }
+    const interval = window.setInterval(checkAccess, 30000);
+    window.addEventListener("focus", checkAccess);
+    return () => { disposed = true; window.clearInterval(interval); window.removeEventListener("focus", checkAccess); };
+  }, [currentUser.role]);
+
   function notify(message: string) {
     setToast(message);
     window.setTimeout(() => setToast(""), 3200);
   }
 
   async function save(entity: Entity, values: Record<string, unknown>) {
+    if (!canEdit) throw new Error("O perfil Auditor permite somente visualização.");
     const creating = !values.id;
     const response = await fetch("/api/crm", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: values.id ? "update" : "create", entity, data: values }),
     });
-    const result = await response.json() as Snapshot & { error?: string; saved?: { entity: Entity; id: number } };
+    const result = await response.json() as Snapshot & { error?: string; message?: string; saved?: { entity: Entity; id: number } };
     if (!response.ok) throw new Error(result.error ?? "Não foi possível salvar o registro.");
     setData(result);
     setModal(null);
-    notify("Registro salvo com sucesso.");
+    notify(result.message ?? "Registro salvo com sucesso.");
     if (creating && result.saved && ["companies", "contacts", "opportunities"].includes(entity)) {
       setActivityPrompt({ entity: entity as "companies" | "contacts" | "opportunities", id: result.saved.id });
     }
   }
 
   async function remove(entity: Entity, record: Record<string, unknown>) {
+    if (!currentUser.isAdmin) throw new Error("Somente administradores podem excluir registros.");
     const response = await fetch("/api/crm", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -550,7 +576,7 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
         </nav>
         <div className="sidebar-footer">
           <div className="avatar">{currentUser.name.split(" ").slice(0, 2).map((part) => part[0]).join("")}</div>
-          <div><strong>{currentUser.name}</strong><span>{currentUser.isAdmin ? "Administrador" : "Operador"}</span></div>
+          <div><strong>{currentUser.name}</strong><span>{currentUser.role === "auditor" ? "Auditor · somente leitura" : currentUser.isAdmin ? "Administrador" : "Operador"}</span></div>
           <button className="signout-button" aria-label="Sair" title="Sair" onClick={async () => { await createSupabaseBrowserClient().auth.signOut(); window.location.assign("/login"); }}>↪</button>
         </div>
       </aside>
@@ -564,20 +590,21 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
           </div>
           <div className="top-actions">
             <button className="ghost-button" onClick={() => notify("Todos os dados estão sincronizados.")}><span className={`sync-dot ${loading ? "loading" : ""}`} /> {loading ? "Sincronizando" : "Sincronizado"}</button>
-            {activeEntity && (
+            {activeEntity && canEdit && (
               <button className="primary-button" aria-haspopup="dialog" onClick={() => setModal({ entity: activeEntity })}>＋ {newRecordLabel[activeEntity]}</button>
             )}
           </div>
         </header>
 
         <div className="content">
+          {!canEdit && <p className="auditor-notice" role="status">Auditor · somente visualização. Consulte registros, metas e relatórios sem alterar os dados.</p>}
           {loadError && <div className="data-load-error" role="alert"><div><strong>Os dados não puderam ser carregados.</strong><span>Nenhum registro demonstrativo foi exibido. Tente carregar novamente.</span></div><button className="secondary-button" onClick={() => { setLoading(true); setLoadError(""); setReloadToken((value) => value + 1); }}>Tentar novamente</button></div>}
           {page === "dashboard" && <Dashboard data={data} metrics={metrics} range={dashboardRange} preset={periodPreset} availableYears={availableYears} applyPreset={applyPreset} selectYear={selectDashboardYear} changeRange={changeCustomRange} setCustom={() => setPeriodPreset("custom")} setPage={setPage} />}
-          {page === "empresas" && <Companies data={data} rows={filteredCompanies} search={organizationSearch} setSearch={setOrganizationSearch} sortDirection={sortDirections.companies} setSortDirection={(direction) => changeSort("companies", direction)} edit={(record) => setModal({ entity: "companies", record: record as unknown as Record<string, unknown> })} />}
-          {page === "contatos" && <Contacts data={data} rows={filteredContacts} search={contactSearch} setSearch={setContactSearch} sortDirection={sortDirections.contacts} setSortDirection={(direction) => changeSort("contacts", direction)} edit={(record) => setModal({ entity: "contacts", record: record as unknown as Record<string, unknown> })} />}
-          {page === "oportunidades" && <Pipeline data={data} rows={filteredOpportunities} search={opportunitySearch} setSearch={setOpportunitySearch} sortDirection={sortDirections.opportunities} setSortDirection={(direction) => changeSort("opportunities", direction)} edit={(record) => setModal({ entity: "opportunities", record: record as unknown as Record<string, unknown> })} />}
-          {page === "atividades" && <Activities data={data} sortDirection={sortDirections.activities} setSortDirection={(direction) => changeSort("activities", direction)} edit={(record) => setModal({ entity: "activities", record: record as unknown as Record<string, unknown> })} />}
-          {page === "projetos" && <Projects data={data} sortDirection={sortDirections.projects} setSortDirection={(direction) => changeSort("projects", direction)} edit={(record) => setModal({ entity: "projects", record: record as unknown as Record<string, unknown> })} />}
+          {page === "empresas" && <Companies canEdit={canEdit} data={data} rows={filteredCompanies} search={organizationSearch} setSearch={setOrganizationSearch} sortDirection={sortDirections.companies} setSortDirection={(direction) => changeSort("companies", direction)} edit={(record) => setModal({ entity: "companies", record: record as unknown as Record<string, unknown> })} />}
+          {page === "contatos" && <Contacts canEdit={canEdit} data={data} rows={filteredContacts} search={contactSearch} setSearch={setContactSearch} sortDirection={sortDirections.contacts} setSortDirection={(direction) => changeSort("contacts", direction)} edit={(record) => setModal({ entity: "contacts", record: record as unknown as Record<string, unknown> })} />}
+          {page === "oportunidades" && <Pipeline canEdit={canEdit} data={data} rows={filteredOpportunities} search={opportunitySearch} setSearch={setOpportunitySearch} sortDirection={sortDirections.opportunities} setSortDirection={(direction) => changeSort("opportunities", direction)} edit={(record) => setModal({ entity: "opportunities", record: record as unknown as Record<string, unknown> })} />}
+          {page === "atividades" && <Activities canEdit={canEdit} data={data} sortDirection={sortDirections.activities} setSortDirection={(direction) => changeSort("activities", direction)} edit={(record) => setModal({ entity: "activities", record: record as unknown as Record<string, unknown> })} />}
+          {page === "projetos" && <Projects canEdit={canEdit} data={data} sortDirection={sortDirections.projects} setSortDirection={(direction) => changeSort("projects", direction)} edit={(record) => setModal({ entity: "projects", record: record as unknown as Record<string, unknown> })} />}
           {page === "indicadores" && <Indicators data={data} metrics={indicatorMetrics} year={selectedKpiYear} setYear={setSelectedKpiYear} />}
           {page === "relatorios" && <Reports data={data} availableYears={availableYears} />}
           {page === "configuracoes" && currentUser.isAdmin && <Settings data={data} canManageKpis={currentUser.isAdmin} addKpi={() => setModal({ entity: "kpis" })} editKpi={(record) => setModal({ entity: "kpis", record: record as unknown as Record<string, unknown> })} deleteKpi={deleteKpi} addUser={() => setModal({ entity: "users" })} editUser={(record) => setModal({ entity: "users", record: record as unknown as Record<string, unknown> })} onImport={async (file) => {
@@ -596,7 +623,7 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
           }} />}
         </div>
       </main>
-      {modal && <RecordModal modal={modal} snapshot={data} close={() => setModal(null)} save={save} remove={remove} canDelete={currentUser.isAdmin} />}
+      {modal && <RecordModal modal={modal} snapshot={data} close={() => setModal(null)} save={save} remove={remove} canDelete={currentUser.isAdmin} readOnly={!canEdit} />}
       {activityPrompt && <ActivityPrompt close={() => setActivityPrompt(null)} create={openSuggestedActivity} />}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
     </div>
@@ -789,17 +816,17 @@ function SortControl({ value, onChange }: { value: SortDirection; onChange: (val
   return <label className="list-sort"><span>Ordem</span><select aria-label="Ordenar registros" value={value} onChange={(event) => onChange(event.target.value as SortDirection)}><option value="newest">Mais recentes primeiro</option><option value="oldest">Mais antigos primeiro</option></select></label>;
 }
 
-function Companies({ data, rows, search, setSearch, sortDirection, setSortDirection, edit }: { data: Snapshot; rows: Company[]; search: string; setSearch: (value: string) => void; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Company) => void }) {
+function Companies({ canEdit, data, rows, search, setSearch, sortDirection, setSortDirection, edit }: { canEdit: boolean; data: Snapshot; rows: Company[]; search: string; setSearch: (value: string) => void; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Company) => void }) {
   return <section className="panel list-panel"><div className="list-toolbar"><div className="search-box">⌕<input aria-label="Buscar organizações" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por parte do nome ou CNPJ..." /></div><SortControl value={sortDirection} onChange={setSortDirection} /><span className="list-count">{rows.length} organizações</span></div>
-    <DataTable headers={["Organização", "CNPJ", "Tipo", "Data de mapeamento", "Porte", "Setor", "UF", "Responsável", "Oportunidades", "Status", ""]} rows={rows.map((c) => [<div className="company-cell" key="c"><span>{c.tradeName.slice(0, 2).toUpperCase()}</span><div><strong>{c.tradeName}</strong><small>{c.legalName}</small></div></div>, c.cnpj, c.organizationType, date(c.mappingDate), c.size, c.sector, c.uf, responsibleName(data, c.responsibleUserId), data.opportunities.filter((o) => o.companyId === c.id).length, <Status key="s" value={c.status} />, <button key="e" className="row-action" onClick={() => edit(c)}>Editar</button>])} />
+    <DataTable headers={["Organização", "CNPJ", "Tipo", "Data de mapeamento", "Porte", "Setor", "UF", "Responsável", "Oportunidades", "Status", ""]} rows={rows.map((c) => [<div className="company-cell" key="c"><span>{c.tradeName.slice(0, 2).toUpperCase()}</span><div><strong>{c.tradeName}</strong><small>{c.legalName}</small></div></div>, c.cnpj, c.organizationType, date(c.mappingDate), c.size, c.sector, c.uf, responsibleName(data, c.responsibleUserId), data.opportunities.filter((o) => o.companyId === c.id).length, <Status key="s" value={c.status} />, <button key="e" className="row-action" onClick={() => edit(c)}>{canEdit ? "Editar" : "Visualizar"}</button>])} />
   </section>;
 }
 
-function Contacts({ data, rows, search, setSearch, sortDirection, setSortDirection, edit }: { data: Snapshot; rows: Contact[]; search: string; setSearch: (value: string) => void; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Contact) => void }) {
-  return <section className="panel list-panel"><div className="list-toolbar"><div className="search-box">⌕<input aria-label="Buscar contatos" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar contato, organização ou CNPJ..." /></div><SortControl value={sortDirection} onChange={setSortDirection} /><span className="list-count">{rows.length} contatos</span></div><DataTable headers={["Contato", "Organização", "Cadastrado em", "Cargo", "Telefone", "Data da prospecção", "Origem", "Responsável", ""]} rows={rows.map((c) => [<div key="n"><strong>{c.name}</strong><small className="block">{c.email}</small></div>, companyName(data, c.companyId), date(c.createdAt), c.role, c.phone, date(c.prospectingDate), c.source, responsibleName(data, c.responsibleUserId), <button key="e" className="row-action" onClick={() => edit(c)}>Editar</button>])} /></section>;
+function Contacts({ canEdit, data, rows, search, setSearch, sortDirection, setSortDirection, edit }: { canEdit: boolean; data: Snapshot; rows: Contact[]; search: string; setSearch: (value: string) => void; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Contact) => void }) {
+  return <section className="panel list-panel"><div className="list-toolbar"><div className="search-box">⌕<input aria-label="Buscar contatos" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar contato, organização ou CNPJ..." /></div><SortControl value={sortDirection} onChange={setSortDirection} /><span className="list-count">{rows.length} contatos</span></div><DataTable headers={["Contato", "Organização", "Cadastrado em", "Cargo", "Telefone", "Data da prospecção", "Origem", "Responsável", ""]} rows={rows.map((c) => [<div key="n"><strong>{c.name}</strong><small className="block">{c.email}</small></div>, companyName(data, c.companyId), date(c.createdAt), c.role, c.phone, date(c.prospectingDate), c.source, responsibleName(data, c.responsibleUserId), <button key="e" className="row-action" onClick={() => edit(c)}>{canEdit ? "Editar" : "Visualizar"}</button>])} /></section>;
 }
 
-function Pipeline({ data, rows, search, setSearch, sortDirection, setSortDirection, edit }: { data: Snapshot; rows: Opportunity[]; search: string; setSearch: (value: string) => void; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Opportunity) => void }) {
+function Pipeline({ canEdit, data, rows, search, setSearch, sortDirection, setSortDirection, edit }: { canEdit: boolean; data: Snapshot; rows: Opportunity[]; search: string; setSearch: (value: string) => void; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Opportunity) => void }) {
   return <>
     <div className="panel pipeline-toolbar"><div className="search-box">⌕<input aria-label="Buscar oportunidades" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar oportunidade, organização ou CNPJ..." /></div><SortControl value={sortDirection} onChange={setSortDirection} /><span className="list-count">{rows.length} oportunidades</span></div>
     <div className="kanban-wrap"><div className="kanban">{stages.map((stage) => {
@@ -807,7 +834,7 @@ function Pipeline({ data, rows, search, setSearch, sortDirection, setSortDirecti
       return <section className="kanban-column" key={stage}>
         <header><span className={`stage-dot stage-${stages.indexOf(stage)}`} /><strong>{stage}</strong><b>{items.length}</b></header>
         <div className="kanban-total">{money.format(items.reduce((sum, o) => sum + o.totalValue, 0))}</div>
-        {items.map((o) => <button className="deal-card" key={o.id} onClick={() => edit(o)}>
+        {items.map((o) => <button className="deal-card" key={o.id} aria-label={`${canEdit ? "Abrir" : "Visualizar"} oportunidade: ${o.title}`} onClick={() => edit(o)}>
           <span className="deal-company">{companyName(data, o.companyId)}</span><strong>{o.title}</strong><p>{o.nextStep || "Definir próximo passo"}</p>
           <div><b>{money.format(o.totalValue)}</b><span>{o.probability}%</span></div>
           <div className="deal-times"><span>Negociação <b>{durationLabel(elapsedDays(o.sentDate, o.acceptedDate))}</b></span><span>Contratação <b>{durationLabel(elapsedDays(o.acceptedDate, o.contractDate))}</b></span></div>
@@ -818,14 +845,14 @@ function Pipeline({ data, rows, search, setSearch, sortDirection, setSortDirecti
   </>;
 }
 
-function Activities({ data, sortDirection, setSortDirection, edit }: { data: Snapshot; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Activity) => void }) {
+function Activities({ canEdit, data, sortDirection, setSortDirection, edit }: { canEdit: boolean; data: Snapshot; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Activity) => void }) {
   const ordered = sortByCreatedAt(data.activities, sortDirection);
-  return <section className="panel list-panel"><div className="activity-toolbar"><div className="summary-strip"><div><span className="dot red" /><strong>{data.activities.filter((a) => a.status === "Pendente").length}</strong><small>Pendentes</small></div><div><span className="dot green" /><strong>{data.activities.filter((a) => a.status === "Concluída").length}</strong><small>Concluídas</small></div></div><SortControl value={sortDirection} onChange={setSortDirection} /></div><DataTable headers={["Atividade", "Empresa", "Tipo", "Prazo", "Responsável", "Status", ""]} rows={ordered.map((a) => [<div key="a"><strong>{a.title}</strong><small className="block">{a.notes}</small></div>, companyName(data, a.companyId), a.type, date(a.dueDate), responsibleName(data, a.responsibleUserId, a.owner), <Status key="s" value={a.status} />, <button key="e" className="row-action" onClick={() => edit(a)}>Editar</button>])} /></section>;
+  return <section className="panel list-panel"><div className="activity-toolbar"><div className="summary-strip"><div><span className="dot red" /><strong>{data.activities.filter((a) => a.status === "Pendente").length}</strong><small>Pendentes</small></div><div><span className="dot green" /><strong>{data.activities.filter((a) => a.status === "Concluída").length}</strong><small>Concluídas</small></div></div><SortControl value={sortDirection} onChange={setSortDirection} /></div><DataTable headers={["Atividade", "Empresa", "Tipo", "Prazo", "Responsável", "Status", ""]} rows={ordered.map((a) => [<div key="a"><strong>{a.title}</strong><small className="block">{a.notes}</small></div>, companyName(data, a.companyId), a.type, date(a.dueDate), responsibleName(data, a.responsibleUserId, a.owner), <Status key="s" value={a.status} />, <button key="e" className="row-action" onClick={() => edit(a)}>{canEdit ? "Editar" : "Visualizar"}</button>])} /></section>;
 }
 
-function Projects({ data, sortDirection, setSortDirection, edit }: { data: Snapshot; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Project) => void }) {
+function Projects({ canEdit, data, sortDirection, setSortDirection, edit }: { canEdit: boolean; data: Snapshot; sortDirection: SortDirection; setSortDirection: (value: SortDirection) => void; edit: (record: Project) => void }) {
   const ordered = sortByCreatedAt(data.projects, sortDirection);
-  return <><div className="panel project-toolbar"><span className="list-count">{ordered.length} projetos</span><SortControl value={sortDirection} onChange={setSortDirection} /></div><div className="project-grid">{ordered.map((p) => <article className="panel project-card" key={p.id}><div className="project-head"><div><span>{companyName(data, p.companyId)}</span><h3>{p.name}</h3></div><Status value={p.status} /></div><div className="project-meta"><div><small>Valor total</small><strong>{money.format(p.totalValue)}</strong></div><div><small>Responsável</small><strong>{responsibleName(data, p.responsibleUserId, p.manager)}</strong></div><div><small>Período</small><strong>{date(p.startDate)} — {date(p.endDate)}</strong></div></div><div className="handoff"><div><span>Checklist de handoff</span><strong>{p.handoffProgress}%</strong></div><div className="progress large"><span style={{ width: `${p.handoffProgress}%` }} /></div><p>{p.handoffProgress === 100 ? "Responsabilidades, documentos e escopo transferidos ao PMO." : "Escopo técnico e marcos definidos · pendente validação financeira."}</p></div><button className="secondary-button full" onClick={() => edit(p)}>Abrir projeto</button></article>)}</div></>;
+  return <><div className="panel project-toolbar"><span className="list-count">{ordered.length} projetos</span><SortControl value={sortDirection} onChange={setSortDirection} /></div><div className="project-grid">{ordered.map((p) => <article className="panel project-card" key={p.id}><div className="project-head"><div><span>{companyName(data, p.companyId)}</span><h3>{p.name}</h3></div><Status value={p.status} /></div><div className="project-meta"><div><small>Valor total</small><strong>{money.format(p.totalValue)}</strong></div><div><small>Responsável</small><strong>{responsibleName(data, p.responsibleUserId, p.manager)}</strong></div><div><small>Período</small><strong>{date(p.startDate)} — {date(p.endDate)}</strong></div></div><div className="handoff"><div><span>Checklist de handoff</span><strong>{p.handoffProgress}%</strong></div><div className="progress large"><span style={{ width: `${p.handoffProgress}%` }} /></div><p>{p.handoffProgress === 100 ? "Responsabilidades, documentos e escopo transferidos ao PMO." : "Escopo técnico e marcos definidos · pendente validação financeira."}</p></div><button className="secondary-button full" onClick={() => edit(p)}>{canEdit ? "Abrir projeto" : "Visualizar projeto"}</button></article>)}</div></>;
 }
 
 function Indicators({ data, metrics, year, setYear }: { data: Snapshot; metrics: Metrics; year: number; setYear: (year: number) => void }) {
@@ -1006,7 +1033,7 @@ function Settings({ data, onBackup, onImport, addKpi, editKpi, deleteKpi, addUse
     <section className="panel list-panel kpi-settings"><div className="list-toolbar"><div><p className="eyebrow">Indicadores</p><h3>Cadastro de indicadores</h3><small>{data.kpis.length} indicadores · soma dos pesos {number.format(totalWeight)} · {canManageKpis ? "acesso administrativo" : "somente leitura"}</small></div>{canManageKpis && <button className="primary-button compact" onClick={addKpi}>＋ Novo indicador</button>}</div><DataTable headers={["Indicador", "Responsável", "Forma de apuração", "Unidade", "Direção", "Peso", "Metas anuais", "No Painel", ""]} rows={data.kpis.map((kpi) => [<strong key="name">{kpi.label}</strong>, responsibleName(data, kpi.responsibleUserId), kpi.measurementMethod, kpi.unit, kpi.direction, number.format(kpi.weight), annualTargets(kpi).filter((item) => item.year >= currentYear()).sort((a, b) => a.year - b.year).map((item) => `${item.year}: ${formatKpiValue(item.target, kpi.unit)}`).join(" · ") || "—", <Status key="dashboard" value={isShownOnDashboard(kpi) ? "Sim" : "Não"} />, canManageKpis ? <div className="row-actions" key="actions"><button className="row-action" onClick={() => editKpi(kpi)}>Editar</button>{kpi.key.startsWith("custom_") && <button className="row-action danger-action" onClick={() => deleteKpi(kpi)}>Excluir</button>}</div> : <span key="locked" className="locked-label">Administrador</span>])} /></section>
     {canManageKpis && <section className="panel settings-card"><div className="settings-icon">G</div><div><p className="eyebrow">Integração</p><h3>Backup no Google Drive</h3><p>Gere uma cópia JSON completa dos usuários, organizações, contatos, oportunidades, atividades, projetos e metas. O arquivo é enviado à pasta configurada no Drive.</p></div><button className="primary-button" onClick={onBackup}>Criar backup agora</button><div className="backup-history"><strong>Histórico recente</strong>{data.backups.length ? data.backups.slice(0, 5).map((backup) => <div key={backup.id}><span className="success-dot" /><div><strong>{backup.fileName}</strong><small>{new Date(backup.createdAt).toLocaleString("pt-BR")}</small></div><Status value={backup.status} /></div>) : <p>Nenhum backup registrado nesta instância.</p>}</div></section>}
     <section className="panel settings-card"><div className="settings-icon">⇩</div><div><p className="eyebrow">Portabilidade</p><h3>Exportar ou importar</h3><p>Exporte todos os dados comerciais para Excel. O backup e a importação integral ficam restritos aos administradores.</p></div><a className="primary-button full center" href="/api/export-excel">Exportar dados para Excel</a>{canManageKpis && <><a className="secondary-button full center" href="/api/export">Baixar backup JSON</a><label className="secondary-button full file-button">Importar arquivo JSON<input type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.target.value = ""; }} /></label></>}</section>
-    <section className="panel list-panel team-settings"><div className="list-toolbar"><div><p className="eyebrow">Equipe</p><h3>Cadastro de usuários</h3><small>{data.users.length} usuários cadastrados · acesso exclusivo para @ctnano.org</small></div>{canManageKpis && <button className="primary-button compact" onClick={addUser}>＋ Novo usuário</button>}</div><DataTable headers={["Usuário", "E-mail", "Telefone", "Perfil", "Status", ""]} rows={data.users.map((user) => [<div className="user-cell" key={user.id}><span>{user.fullName.split(" ").slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span><strong>{user.fullName}</strong></div>, user.email, user.phone || "—", <Status key="role" value={user.role === "admin" ? "Administrador" : "Usuário"} />, <Status key="status" value={user.active ? "Ativo" : "Inativo"} />, canManageKpis ? <button key="edit" className="row-action" onClick={() => editUser(user)}>Editar</button> : <span key="locked" className="locked-label">Administrador</span>])} /></section>
+    <section className="panel list-panel team-settings"><div className="list-toolbar"><div><p className="eyebrow">Equipe</p><h3>Cadastro de usuários</h3><small>{data.users.length} usuários cadastrados · contas externas somente como Auditor</small></div>{canManageKpis && <button className="primary-button compact" onClick={addUser}>＋ Novo usuário</button>}</div><DataTable headers={["Usuário", "E-mail", "Telefone", "Perfil", "Status", ""]} rows={data.users.map((user) => [<div className="user-cell" key={user.id}><span>{user.fullName.split(" ").slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</span><strong>{user.fullName}</strong></div>, user.email, user.phone || "—", <Status key="role" value={user.role === "admin" ? "Administrador" : user.role === "auditor" ? "Auditor" : "Usuário"} />, <Status key="status" value={user.active ? "Acesso ativo" : "Acesso desativado"} />, canManageKpis ? <button key="edit" className="row-action" onClick={() => editUser(user)}>Editar</button> : <span key="locked" className="locked-label">Administrador</span>])} /></section>
   </div>;
 }
 
@@ -1024,7 +1051,7 @@ function Status({ value }: { value: string }) {
   return <span className={`status ${tone}`}>{value}</span>;
 }
 
-function RecordModal({ modal, snapshot, close, save, remove, canDelete }: { modal: { entity: Entity; record?: Record<string, unknown> }; snapshot: Snapshot; close: () => void; save: (entity: Entity, values: Record<string, unknown>) => Promise<void>; remove: (entity: Entity, record: Record<string, unknown>) => Promise<void>; canDelete: boolean }) {
+function RecordModal({ modal, snapshot, close, save, remove, canDelete, readOnly }: { modal: { entity: Entity; record?: Record<string, unknown> }; snapshot: Snapshot; close: () => void; save: (entity: Entity, values: Record<string, unknown>) => Promise<void>; remove: (entity: Entity, record: Record<string, unknown>) => Promise<void>; canDelete: boolean; readOnly: boolean }) {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -1036,7 +1063,7 @@ function RecordModal({ modal, snapshot, close, save, remove, canDelete }: { moda
   const [kpiTargets, setKpiTargets] = useState<KpiAnnualTarget[]>(() => editingKpi ? annualTargets(editingKpi) : [{ year: currentYear(), target: 0, manualActual: 0 }]);
   const selectableKpiYears = Array.from({ length: 10 }, (_, index) => currentYear() + index);
   const definitions: Record<Entity, { label: string; fields: [string, string, string, string[]?][] }> = {
-    users: { label: "usuário", fields: [["fullName", "Nome completo", "text"], ["email", "E-mail @ctnano.org", "email"], ["phone", "Telefone", "tel"], ["role", "Perfil de acesso", "select", ["user", "admin"]], ["active", "Usuário ativo", "checkbox"]] },
+    users: { label: "usuário", fields: [["fullName", "Nome completo", "text"], ["email", "E-mail", "email"], ["phone", "Telefone", "tel"], ["role", "Perfil de acesso", "select", ["user", "admin", "auditor"]], ["active", "Acesso ativo", "checkbox"]] },
     companies: { label: "organização", fields: [["tradeName", "Nome fantasia", "text"], ["legalName", "Razão social", "text"], ["cnpj", "CNPJ", "text"], ["organizationType", "Tipo de organização", "select", ["Empresa", "Governo", "Investidor", "Outras"]], ["mappingDate", "Data de mapeamento", "date"], ["responsibleUserId", "Pessoa responsável", "user"], ["size", "Porte", "select", ["Startup", "MPE", "Média", "Grande", "Outros"]], ["sector", "Setor industrial", "text"], ["uf", "UF", "text"], ["status", "Status", "select", ["Ativa", "Inativa"]]] },
     contacts: { label: "contato", fields: [["name", "Nome", "text"], ["companyId", "Organização", "company"], ["responsibleUserId", "Pessoa responsável", "user"], ["email", "E-mail", "email"], ["phone", "Telefone", "tel"], ["role", "Cargo", "text"], ["prospectingDate", "Data da prospecção", "date"], ["source", "Origem", "select", ["Prospecção ativa", "Evento", "Indicação", "Site", "Outro"]]] },
     opportunities: { label: "oportunidade", fields: [["sourceCode", "Código da negociação", "text"], ["projectCode", "Código do projeto", "text"], ["title", "Título", "text"], ["companyId", "Empresa", "company"], ["responsibleUserId", "Pessoa responsável", "user"], ["stage", "Etapa", "select", stages], ["sourceStatus", "Resultado", "select", ["Aberto", "Aceito", "Perdido"]], ["lossReason", "Motivo da perda", "text"], ["origin", "Origem", "text"], ["technicalTeam", "Equipe técnica", "text"], ["modality", "Modalidade", "select", ["EMBRAPII CG", "ROTA 2030", "SEBRAE DT", "SEBRAE ET", "Alta Alavancagem", "Ministério da Saúde", "Outro"]], ["uf", "UF", "text"], ["totalValue", "Valor total (R$)", "number"], ["companyValue", "Valor da empresa (R$)", "number"], ["economicValue", "Valor econômico (R$)", "number"], ["embrapiiValue", "Participação EMBRAPII (R$)", "number"], ["probability", "Probabilidade (%)", "number"], ["proposalDate", "Data de elaboração", "date"], ["sentDate", "Proposta enviada em", "date"], ["acceptedDate", "Data de aceite/recusa", "date"], ["contractDate", "Conclusão da contratação", "date"], ["nextStep", "Próximo passo", "text"], ["dueDate", "Expectativa de fechamento", "date"]] },
@@ -1046,7 +1073,7 @@ function RecordModal({ modal, snapshot, close, save, remove, canDelete }: { moda
   };
   const definition = definitions[modal.entity];
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setSaving(true); setError("");
+    event.preventDefault(); if (readOnly) return; setSaving(true); setError("");
     const form = new FormData(event.currentTarget); const values: Record<string, unknown> = {};
     definition.fields.forEach(([name, , type]) => { const raw = form.get(name)?.toString() ?? ""; values[name] = type === "checkbox" ? form.has(name) : ["number", "company", "opportunity", "user"].includes(type) ? (raw ? Number(raw) : null) : raw; });
     if (modal.entity === "companies") {
@@ -1075,7 +1102,7 @@ function RecordModal({ modal, snapshot, close, save, remove, canDelete }: { moda
   const isEdit = Boolean(modal.record?.id);
   const isProtectedKpi = modal.entity === "kpis" && !String(modal.record?.key ?? "").startsWith("custom_");
   const isPrimaryAdmin = modal.entity === "users" && String(modal.record?.email ?? "").toLowerCase() === "ricardo.neres@ctnano.org";
-  const mayDelete = canDelete && isEdit && !isProtectedKpi && !isPrimaryAdmin;
+  const mayDelete = !readOnly && canDelete && isEdit && !isProtectedKpi && !isPrimaryAdmin;
   async function deleteRecord() {
     if (!modal.record || !mayDelete) return;
     const confirmed = window.confirm(`Excluir este cadastro de ${definition.label}?\n\nEsta ação é permanente e não pode ser desfeita.`);
@@ -1085,8 +1112,9 @@ function RecordModal({ modal, snapshot, close, save, remove, canDelete }: { moda
   }
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
     <section className="modal" role="dialog" aria-modal="true">
-      <header><div><p className="eyebrow">{isEdit ? "Editar" : "Novo cadastro"}</p><h2>{isEdit ? `Editar ${definition.label}` : `${["kpis", "projects", "users"].includes(modal.entity) ? "Novo" : "Nova"} ${definition.label}`}</h2></div><button onClick={close} aria-label="Fechar">×</button></header>
+      <header><div><p className="eyebrow">{readOnly ? "Somente visualização" : isEdit ? "Editar" : "Novo cadastro"}</p><h2>{readOnly ? `Visualizar ${definition.label}` : isEdit ? `Editar ${definition.label}` : `${["kpis", "projects", "users"].includes(modal.entity) ? "Novo" : "Nova"} ${definition.label}`}</h2></div><button onClick={close} aria-label="Fechar">×</button></header>
       <form onSubmit={submit}>
+        <fieldset disabled={readOnly} className="record-fields">
         <div className="form-grid">{definition.fields.map(([name, label, type, options]) => {
           const isContractDate = modal.entity === "opportunities" && name === "contractDate";
           const isProjectCode = modal.entity === "opportunities" && name === "projectCode";
@@ -1097,7 +1125,7 @@ function RecordModal({ modal, snapshot, close, save, remove, canDelete }: { moda
           const selectValue = name === "stage" && modal.entity === "opportunities" ? opportunityStage : name === "sourceStatus" && modal.entity === "opportunities" ? opportunityResult : isMeasurement ? kpiMeasurementMethod : undefined;
           const selectChange = name === "stage" && modal.entity === "opportunities" ? (event: React.ChangeEvent<HTMLSelectElement>) => setOpportunityStage(event.target.value) : name === "sourceStatus" && modal.entity === "opportunities" ? (event: React.ChangeEvent<HTMLSelectElement>) => setOpportunityResult(event.target.value) : isMeasurement ? (event: React.ChangeEvent<HTMLSelectElement>) => setKpiMeasurementMethod(event.target.value) : undefined;
           return <label key={name} className={type === "textarea" || type === "checkbox" ? "wide" : ""}><span>{label}</span>{
-            type === "select" ? <select name={name} value={selectValue} defaultValue={selectValue === undefined ? String(modal.record?.[name] ?? options?.[0] ?? "") : undefined} onChange={selectChange} disabled={isSystemMeasurement}>{options?.map((option) => <option value={option} key={option}>{name === "role" ? option === "admin" ? "Administrador" : "Usuário" : option}</option>)}</select>
+            type === "select" ? <select name={name} value={selectValue} defaultValue={selectValue === undefined ? String(modal.record?.[name] ?? options?.[0] ?? "") : undefined} onChange={selectChange} disabled={isSystemMeasurement}>{options?.map((option) => <option value={option} key={option}>{name === "role" ? option === "admin" ? "Administrador" : option === "auditor" ? "Auditor — somente visualização" : "Usuário" : option}</option>)}</select>
               : type === "company" ? <select name={name} defaultValue={String(modal.record?.[name] ?? "")} required><option value="">Selecione...</option>{snapshot.companies.map((company) => <option value={company.id} key={company.id}>{company.tradeName}</option>)}</select>
                 : type === "opportunity" ? <select name={name} defaultValue={String(modal.record?.[name] ?? "")}><option value="">Sem vínculo</option>{snapshot.opportunities.map((opportunity) => <option value={opportunity.id} key={opportunity.id}>{opportunity.title}</option>)}</select>
                   : type === "user" ? <select name={name} defaultValue={String(modal.record?.[name] ?? "")} required><option value="">Selecione...</option>{snapshot.users.filter((user) => user.active || user.id === Number(modal.record?.[name])).map((user) => <option value={user.id} key={user.id}>{user.fullName}</option>)}</select>
@@ -1117,8 +1145,10 @@ function RecordModal({ modal, snapshot, close, save, remove, canDelete }: { moda
         })}</div>{kpiTargets.some((item) => item.year < currentYear()) && <p className="historical-targets">Metas de anos anteriores foram preservadas no histórico e não são alteradas nesta tela.</p>}</section>}
         {modal.entity === "opportunities" && <><div className="opportunity-time-preview"><div><span>Tempo de negociação</span><strong>{durationLabel(negotiationPreview)}</strong></div><div><span>Tempo de contratação</span><strong>{durationLabel(contractingPreview)}</strong></div><div><span>Expectativa de fechamento</span><strong>{date(expectedClosingPreview)}</strong></div></div><p className="form-hint" id="contract-date-rule">A conclusão da contratação pode ser editada em qualquer etapa. O código do projeto é habilitado quando a etapa for “Contratada”. A expectativa de fechamento é bloqueada e calculada quando o resultado é “Aceito”: data de aceite/recusa + {snapshot.insights.averageContractingDays === null ? "tempo médio de contratação disponível" : `${snapshot.insights.averageContractingDays} dias de tempo médio de contratação`}.</p></>}
         {modal.entity === "kpis" && <p className="form-hint">O campo “Realizado manual” é habilitado apenas para apuração manual. A forma de apuração dos indicadores automáticos é protegida pelo sistema, e a opção de exibição no Painel pode ser alterada a qualquer momento.</p>}
+        </fieldset>
+        {modal.entity === "users" && <p className="form-hint">Contas externas são permitidas somente como Auditor. Desmarque “Acesso ativo” para impedir o acesso ao CRM. Novas contas recebem um convite para definir a senha.</p>}
         {error && <p className="form-error">{error}</p>}
-        <footer>{mayDelete && <button type="button" className="danger-button modal-delete-button" onClick={deleteRecord} disabled={saving || deleting}>{deleting ? "Excluindo..." : "Excluir registro"}</button>}<button type="button" className="secondary-button" onClick={close} disabled={saving || deleting}>Cancelar</button><button type="submit" className="primary-button" disabled={saving || deleting}>{saving ? "Salvando..." : "Salvar registro"}</button></footer>
+        <footer>{mayDelete && <button type="button" className="danger-button modal-delete-button" onClick={deleteRecord} disabled={saving || deleting}>{deleting ? "Excluindo..." : "Excluir registro"}</button>}<button type="button" className="secondary-button" onClick={close} disabled={saving || deleting}>{readOnly ? "Fechar" : "Cancelar"}</button>{!readOnly && <button type="submit" className="primary-button" disabled={saving || deleting}>{saving ? "Salvando..." : "Salvar registro"}</button>}</footer>
       </form>
     </section>
   </div>;

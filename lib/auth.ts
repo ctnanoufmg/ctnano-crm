@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createAdminClient } from "./supabase/admin";
 import { createSupabaseServerClient } from "./supabase/server";
+import { hasCrmAccess, type CrmRole } from "./access";
 
 export type CrmSessionUser = {
   id: number;
@@ -8,7 +9,7 @@ export type CrmSessionUser = {
   fullName: string;
   email: string;
   phone: string;
-  role: "admin" | "user";
+  role: CrmRole;
   active: boolean;
 };
 
@@ -19,7 +20,7 @@ function mapProfile(row: Record<string, unknown>): CrmSessionUser {
     fullName: String(row.full_name ?? ""),
     email: String(row.email ?? ""),
     phone: String(row.phone ?? ""),
-    role: row.role === "admin" ? "admin" : "user",
+    role: row.role as CrmRole,
     active: Boolean(row.active),
   };
 }
@@ -27,7 +28,7 @@ function mapProfile(row: Record<string, unknown>): CrmSessionUser {
 export async function getCrmSessionUser(): Promise<CrmSessionUser | null> {
   const supabase = await createSupabaseServerClient();
   const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user?.email || !user.email.toLowerCase().endsWith("@ctnano.org")) return null;
+  if (error || !user?.email) return null;
 
   const admin = createAdminClient();
   const { data: profile, error: profileError } = await admin
@@ -35,13 +36,14 @@ export async function getCrmSessionUser(): Promise<CrmSessionUser | null> {
     .select("*")
     .eq("auth_user_id", user.id)
     .maybeSingle();
-  if (profileError || !profile || !profile.active) return null;
-  return mapProfile(profile);
+  if (profileError || !profile) return null;
+  const mapped = mapProfile(profile);
+  return hasCrmAccess(mapped, user) ? mapped : null;
 }
 
 export async function requireCrmPageUser() {
   const user = await getCrmSessionUser();
-  if (!user) redirect("/login");
+  if (!user) redirect("/login?erro=sem-acesso");
   return user;
 }
 
