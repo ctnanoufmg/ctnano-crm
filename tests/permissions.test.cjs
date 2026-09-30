@@ -21,6 +21,20 @@ function load(relativePath, mocks = {}, extra = '') {
 const access = load('lib/access.ts');
 const auditor = { id: 15, authUserId: 'test-auditor', email: 'auditor@embrapii.org.br', role: 'auditor', active: true };
 
+test('invitation handler installs implicit tokens instead of relying on the PKCE client', async () => {
+  const { acceptCrmInvitation } = load('lib/invitation.ts');
+  const calls = [];
+  const client = { auth: Object.fromEntries(['setSession', 'exchangeCodeForSession', 'verifyOtp', 'getSession'].map(name => [name, async value => { calls.push([name, value]); return { data: { session: {} }, error: null }; }])) };
+  await acceptCrmInvitation(client, new URL('https://crm.example/auth/convite#access_token=test-token&refresh_token=test-refresh&type=invite'));
+  assert.deepEqual(calls.pop(), ['setSession', { access_token: 'test-token', refresh_token: 'test-refresh' }]);
+  await acceptCrmInvitation(client, new URL('https://crm.example/auth/convite?code=test-code'));
+  assert.deepEqual(calls.pop(), ['exchangeCodeForSession', 'test-code']);
+  await acceptCrmInvitation(client, new URL('https://crm.example/auth/convite?token_hash=test-hash'));
+  assert.deepEqual(calls.pop(), ['verifyOtp', { token_hash: 'test-hash', type: 'invite' }]);
+  await assert.rejects(() => acceptCrmInvitation(client, new URL('https://crm.example/auth/convite#error=access_denied')));
+  assert.equal(calls.length, 0);
+});
+
 test('external profiles are restricted to auditor; inactive and unlinked profiles are denied', () => {
   assert.equal(access.isAllowedProfileEmail(auditor.email, 'auditor'), true);
   for (const role of ['admin', 'user']) assert.equal(access.isAllowedProfileEmail(auditor.email, role), false);
