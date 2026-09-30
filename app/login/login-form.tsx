@@ -91,7 +91,7 @@ export default function LoginForm({ initialError = "", initialMessage = "" }: Lo
         <p className="eyebrow">Acesso institucional</p>
         {mode === "signup" && <h1>Criar uma conta</h1>}
         {mode === "recovery" && <h1>Recuperar senha</h1>}
-        <p className="login-copy">{mode === "recovery" ? "Informe o e-mail da sua conta para receber o link de redefinição." : "Equipe CTNano e auditores cadastrados pelo administrador."}</p>
+        <p className="login-copy">{mode === "recovery" ? "Informe o e-mail da sua conta para receber o link de redefinição." : "Equipe CTNano e contas com perfil Consulta cadastradas pelo administrador."}</p>
       </div>
       <form onSubmit={submit}>
         {mode === "signup" && <>
@@ -111,7 +111,7 @@ export default function LoginForm({ initialError = "", initialMessage = "" }: Lo
         </>}
         {mode !== "login" && <button type="button" className="login-switch" onClick={() => changeMode("login")}>Voltar para o acesso</button>}
       </div>
-      <small className="login-note">Auditores externos precisam ser cadastrados por um administrador e possuem acesso somente para visualização. O cadastro público é exclusivo para @ctnano.org.</small>
+      <small className="login-note">Contas externas com perfil Consulta precisam ser cadastradas por um administrador e possuem acesso somente para visualização. O cadastro público é exclusivo para @ctnano.org.</small>
     </section>
   </main>;
 }

@@ -85,7 +85,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const auth = await requireCrmApiUser();
   if (auth.response || !auth.user) return auth.response;
-  if (!canWriteCrm(auth.user.role)) return Response.json({ error: "O perfil Auditor permite somente visualização." }, { status: 403 });
+  if (!canWriteCrm(auth.user.role)) return Response.json({ error: "O perfil Consulta permite somente visualização." }, { status: 403 });
   try {
     const payload = await request.json() as { action?: "create" | "update" | "delete"; entity?: CrmEntity; data?: Record<string, unknown> };
     if (!payload.action || !actions.has(payload.action) || !payload.entity || !entities.has(payload.entity) || !payload.data) return Response.json({ error: "Operação inválida." }, { status: 400 });
@@ -145,7 +145,7 @@ export async function POST(request: Request) {
       let role = values.role;
       let active = values.active !== false;
       if (!fullName) return Response.json({ error: "Informe o nome completo do usuário." }, { status: 400 });
-      if (!isAllowedProfileEmail(email, role)) return Response.json({ error: "E-mails externos são permitidos somente no perfil Auditor." }, { status: 400 });
+      if (!isAllowedProfileEmail(email, role)) return Response.json({ error: "E-mails externos são permitidos somente no perfil Consulta." }, { status: 400 });
       if (email === ADMIN_EMAIL) { role = "admin"; active = true; }
       if (payload.action === "update" && id === auth.user.id && (role !== "admin" || !active)) return Response.json({ error: "Você não pode remover seu próprio acesso administrativo." }, { status: 400 });
 
