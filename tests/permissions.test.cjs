@@ -21,6 +21,41 @@ function load(relativePath, mocks = {}, extra = '') {
 const access = load('lib/access.ts');
 const auditor = { id: 15, authUserId: 'test-auditor', email: 'auditor@embrapii.org.br', role: 'auditor', active: true };
 
+test('report selection controls preview and Excel; overview charts require explicit selection', () => {
+  const React = require('react');
+  const { renderToStaticMarkup } = require('react-dom/server');
+  for (const key of ['indicators', 'prospectedCompanies', 'contractedProjects', 'openNegotiations']) {
+    for (const charts of [false, true]) {
+      let index = 0, exported;
+      const sections = Object.fromEntries(['indicators', 'prospectedCompanies', 'contractedProjects', 'openNegotiations'].map(name => [name, name === key]));
+      const states = [{ start: '2026-01-01', end: '2026-12-31' }, 'year', sections, [1, 2], charts];
+      const stop = new Error('captured');
+      const { Reports, fallback } = load('app/crm-app.tsx', {
+        react: { ...React, useMemo: fn => fn(), useState: () => [states[index++], () => {}] },
+        '../lib/access': access, '../lib/supabase/client': {},
+        '../lib/excel-export': { createConfigurableReportExcel: value => { exported = value; throw stop; } },
+      }, '\nexport { Reports, fallback };');
+      const data = { ...fallback, kpis: fallback.kpis.slice(0, 3) };
+      const tree = Reports({ data, availableYears: [2026] });
+      const html = renderToStaticMarkup(tree);
+      const output = html.slice(html.indexOf('<article class="report-output">'));
+      assert.equal(output.includes('report-chart-grid'), charts);
+      for (const [name, title] of [['indicators', 'Indicadores'], ['prospectedCompanies', 'Empresas prospectadas'], ['contractedProjects', 'Projetos contratados'], ['openNegotiations', 'Negociações em aberto e aceitas']]) {
+        assert.equal(output.includes('<h3>' + title + '</h3>'), sections[name]);
+      }
+      if (key === 'indicators') assert.match(output, /1 selecionados/);
+      const findExport = node => {
+        if (!node || typeof node !== 'object') return;
+        if (node.type === 'button' && node.props.children === 'Exportar Excel') return node;
+        return React.Children.toArray(node.props?.children).map(findExport).find(Boolean);
+      };
+      assert.throws(() => findExport(tree).props.onClick(), error => error === stop);
+      assert.equal(exported.length, 1);
+      if (key === 'indicators') { assert.equal(exported[0].rows.length, 1); assert.equal(exported[0].rows[0].indicator, data.kpis[2].label); }
+    }
+  }
+});
+
 test('invitation handler installs implicit tokens instead of relying on the PKCE client', async () => {
   const { acceptCrmInvitation } = load('lib/invitation.ts');
   const calls = [];

@@ -900,6 +900,7 @@ function Reports({ data, availableYears }: { data: Snapshot; availableYears: num
   const [preset, setPreset] = useState<PeriodPreset>("currentYear");
   const [sections, setSections] = useState<Record<ReportSectionKey, boolean>>({ indicators: true, prospectedCompanies: true, contractedProjects: true, openNegotiations: true });
   const [excludedKpiIds, setExcludedKpiIds] = useState<number[]>([]);
+  const [showOverviewCharts, setShowOverviewCharts] = useState(false);
 
   const metrics = useMemo(() => calculateMetrics(data, range), [data, range]);
   const periodYear = range.start.slice(0, 4) === range.end.slice(0, 4) ? Number(range.start.slice(0, 4)) : null;
@@ -993,7 +994,8 @@ function Reports({ data, availableYears }: { data: Snapshot; availableYears: num
   }
 
   const selectedYear = periodYear && availableYears.includes(periodYear) ? String(periodYear) : "";
-  const hasSection = Object.values(sections).some(Boolean);
+  const hasExcelSection = Object.values(sections).some(Boolean);
+  const hasSection = hasExcelSection || showOverviewCharts;
   return <div className="reports-page">
     <section className="welcome-row report-screen-only"><div><h2>Relatórios</h2><p>Configure o período, os indicadores e as listas que serão incluídas.</p></div></section>
     <section className="panel report-config report-screen-only">
@@ -1001,13 +1003,14 @@ function Reports({ data, availableYears }: { data: Snapshot; availableYears: num
       <div className="report-config-block"><div><p className="eyebrow">Conteúdo</p><h3>Seções do relatório</h3></div><div className="report-option-grid">{([
         ["indicators", "Indicadores", "Resultados dos indicadores selecionados"], ["prospectedCompanies", "Empresas prospectadas", "Organizações com contatos no período"], ["contractedProjects", "Projetos contratados", "Oportunidades contratadas no período"], ["openNegotiations", "Negociações abertas", "Resultados Em aberto e Aceito no período"],
       ] as [ReportSectionKey, string, string][]).map(([key, label, detail]) => <label className="report-option" key={key}><input type="checkbox" checked={sections[key]} onChange={() => toggleSection(key)} /><span><strong>{label}</strong><small>{detail}</small></span></label>)}</div></div>
+      <label className="report-option"><input type="checkbox" checked={showOverviewCharts} onChange={(event) => setShowOverviewCharts(event.target.checked)} /><span><strong>Gráficos de visão geral</strong><small>Inclui todos os indicadores comerciais nos gráficos e no funil do PDF. Não se aplica ao Excel.</small></span></label>
       {sections.indicators && <div className="report-config-block wide"><div className="report-config-title"><div><p className="eyebrow">Indicadores</p><h3>Escolha os indicadores</h3></div><div><button className="text-button" onClick={() => setExcludedKpiIds([])}>Selecionar todos</button><button className="text-button" onClick={() => setExcludedKpiIds(data.kpis.map((kpi) => kpi.id))}>Limpar</button></div></div><div className="report-kpi-options">{data.kpis.map((kpi) => <label key={kpi.id}><input type="checkbox" checked={!excludedKpiIds.includes(kpi.id)} onChange={() => toggleKpi(kpi.id)} /><span>{kpi.label}</span></label>)}</div></div>}
-      <div className="report-actions wide"><span>Período selecionado: <strong>{formatRange(range)}</strong></span><button className="secondary-button" disabled={!hasSection} onClick={() => window.print()}>Imprimir / salvar PDF</button><button className="primary-button" disabled={!hasSection} onClick={exportReport}>Exportar Excel</button></div>
+      <div className="report-actions wide"><span>Período selecionado: <strong>{formatRange(range)}</strong></span><button className="secondary-button" disabled={!hasSection} onClick={() => window.print()}>Imprimir / salvar PDF</button><button className="primary-button" disabled={!hasExcelSection} onClick={exportReport}>Exportar Excel</button></div>
     </section>
     {!hasSection ? <section className="panel report-empty report-screen-only">Selecione ao menos uma seção para gerar o relatório.</section> : <article className="report-output">
-      <section className="report-cover-page">
+      <section className={`report-cover-page${showOverviewCharts ? "" : " report-cover-compact"}`}>
         <header className="report-document-header"><div className="report-document-brand"><img src="/ctnano-logo.webp" alt="CTNano/UFMG" /><div><p>CRM · Novos Negócios</p><h2>Relatório comercial</h2></div></div><div><strong>{formatRange(range)}</strong><span>Gerado em {new Date().toLocaleString("pt-BR")}</span></div></header>
-        <div className="report-chart-grid">
+        {showOverviewCharts && <div className="report-chart-grid">
           <section className="report-chart-panel">
             <div className="panel-heading"><div><p className="eyebrow">Evolução no período</p><h3>Prospecções, propostas e contratos</h3></div></div>
             <EvolutionLineChart items={metrics.timeline} />
@@ -1016,7 +1019,7 @@ function Reports({ data, availableYears }: { data: Snapshot; availableYears: num
             <div className="panel-heading"><div><p className="eyebrow">Conversão</p><h3>Funil comercial no período</h3></div></div>
             <CommercialFunnel metrics={metrics} />
           </section>
-        </div>
+        </div>}
       </section>
       {sections.indicators && <section className="report-section"><div className="report-section-title"><div><p className="eyebrow">Desempenho</p><h3>Indicadores</h3></div><span>{reportKpis.length} selecionados</span></div><DataTable headers={["Indicador", "Realizado", "Meta anual", "Atendimento", "Unidade", "Peso"]} rows={reportKpis.map(({ kpi, actual, goal, attainment }) => [<strong key="kpi">{kpi.label}</strong>, formatKpiValue(actual, kpi.unit), goal === undefined ? "—" : formatKpiValue(goal, kpi.unit), attainment === null ? "—" : `${attainment}%`, kpi.unit, number.format(kpi.weight)])} /></section>}
       {sections.prospectedCompanies && <section className="report-section"><div className="report-section-title"><div><p className="eyebrow">Prospecção</p><h3>Empresas prospectadas</h3></div><span>{prospectedCompanies.length} empresas · {contactsInPeriod.length} contatos</span></div><DataTable headers={["Empresa", "CNPJ", "Setor", "UF", "Contatos", "Última prospecção", "Responsável"]} rows={prospectedCompanies.map(({ company, contacts, lastDate }) => [<div key="company"><strong>{company.tradeName}</strong><small className="block">{company.legalName}</small></div>, company.cnpj || "—", company.sector || "—", company.uf || "—", contacts.map((item) => item.name).join(", "), date(lastDate), responsibleName(data, contacts.at(-1)?.responsibleUserId ?? company.responsibleUserId)])} /></section>}

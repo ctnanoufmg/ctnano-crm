@@ -152,3 +152,5 @@ nav button:hover { color: white; background: rgba(59,130,246,.08); } nav button.
 .record-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
 .auditor-notice { padding: 12px 16px; border-radius: 10px; background: #eff6ff; color: #1e40af; }
 .record-fields:disabled input, .record-fields:disabled select, .record-fields:disabled textarea { opacity: 1; color: inherit; }
+
+@media print { .report-cover-compact { break-after: auto; page-break-after: auto; } }
