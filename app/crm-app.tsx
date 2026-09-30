@@ -590,7 +590,7 @@ export default function CRMApp({ currentUser }: { currentUser: { email: string; 
           </div>
           <div className="top-actions">
             <button className="ghost-button" onClick={() => notify("Todos os dados estão sincronizados.")}><span className={`sync-dot ${loading ? "loading" : ""}`} /> {loading ? "Sincronizando" : "Sincronizado"}</button>
-            {activeEntity && canEdit && (
+            {activeEntity && activeEntity !== "projects" && canEdit && (
               <button className="primary-button" aria-haspopup="dialog" onClick={() => setModal({ entity: activeEntity })}>＋ {newRecordLabel[activeEntity]}</button>
             )}
           </div>
@@ -1130,7 +1130,7 @@ function RecordModal({ modal, snapshot, close, save, remove, canDelete, readOnly
           return <label key={name} className={type === "textarea" || type === "checkbox" ? "wide" : ""}><span>{label}</span>{
             type === "select" ? <select name={name} value={selectValue} defaultValue={selectValue === undefined ? String(modal.record?.[name] ?? options?.[0] ?? "") : undefined} onChange={selectChange} disabled={isSystemMeasurement}>{options?.map((option) => <option value={option} key={option}>{name === "role" ? option === "admin" ? "Administrador" : option === "auditor" ? "Consulta — somente visualização" : "Usuário" : option}</option>)}</select>
               : type === "company" ? <select name={name} defaultValue={String(modal.record?.[name] ?? "")} required><option value="">Selecione...</option>{snapshot.companies.map((company) => <option value={company.id} key={company.id}>{company.tradeName}</option>)}</select>
-                : type === "opportunity" ? <select name={name} defaultValue={String(modal.record?.[name] ?? "")}><option value="">Sem vínculo</option>{snapshot.opportunities.map((opportunity) => <option value={opportunity.id} key={opportunity.id}>{opportunity.title}</option>)}</select>
+                : type === "opportunity" ? <select name={name} defaultValue={String(modal.record?.[name] ?? "")}><option value="">{modal.entity === "projects" ? "Selecione uma oportunidade contratada" : "Sem vínculo"}</option>{snapshot.opportunities.filter((opportunity) => modal.entity !== "projects" || opportunity.stage === "Contratada").map((opportunity) => <option value={opportunity.id} key={opportunity.id}>{opportunity.title}</option>)}</select>
                   : type === "user" ? <select name={name} defaultValue={String(modal.record?.[name] ?? "")} required><option value="">Selecione...</option>{snapshot.users.filter((user) => user.active || user.id === Number(modal.record?.[name])).map((user) => <option value={user.id} key={user.id}>{user.fullName}</option>)}</select>
                     : type === "textarea" ? <textarea name={name} defaultValue={String(modal.record?.[name] ?? "")} />
                     : type === "checkbox" ? <input className="checkbox-input" name={name} type="checkbox" defaultChecked={Boolean(modal.record ? modal.record[name] : true)} />

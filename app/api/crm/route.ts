@@ -184,6 +184,15 @@ export async function POST(request: Request) {
       if (payload.entity === "projects") values.manager = responsible.full_name;
     }
 
+    if (payload.entity === "projects") {
+      const opportunityId = Number(values.opportunityId);
+      const { data: origin, error: originError } = await db.from("opportunities").select("id,company_id,stage").eq("id", opportunityId).maybeSingle();
+      if (originError) throw new Error(originError.message);
+      if (!origin || origin.stage !== "Contratada") return Response.json({ error: "O projeto precisa estar vinculado a uma oportunidade na etapa Contratada." }, { status: 400 });
+      values.opportunityId = opportunityId;
+      values.companyId = origin.company_id;
+    }
+
     if (payload.entity === "companies") {
       const organizationType = String(values.organizationType ?? "");
       const mappingDate = String(values.mappingDate ?? "");

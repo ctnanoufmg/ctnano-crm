@@ -109,7 +109,11 @@ export async function POST(request: Request) {
       const companyId = resolveCompany(project.companyId, project.companyCnpj, project.companyName);
       if (!companyId || !project.name?.trim()) { stats.unmatched += 1; continue; }
       const projectStatus = String(project.status ?? "Em execução").toLowerCase() === "handover" ? "Handoff" : project.status ?? "Em execução";
-      const { error } = await db.from("projects").insert(toDatabase("projects", { companyId, opportunityId: resolveOpportunity(project.opportunityId, project.opportunitySourceCode, project.opportunityTitle), name: project.name.trim(), status: projectStatus, startDate: project.startDate ?? "", endDate: project.endDate ?? "", manager: project.manager ?? "", responsibleUserId: resolveResponsible(project.responsibleUserId, project.manager), handoffProgress: project.handoffProgress ?? project.handoverProgress ?? 100, totalValue: project.totalValue ?? 0 }));
+      const opportunityId = resolveOpportunity(project.opportunityId, project.opportunitySourceCode, project.opportunityTitle);
+      const existingResult = opportunityId ? await db.from("projects").select("id").eq("opportunity_id", opportunityId).maybeSingle() : { data: null, error: null };
+      if (existingResult.error) throw new Error(existingResult.error.message);
+      const projectValues = toDatabase("projects", { companyId, opportunityId, name: project.name.trim(), status: projectStatus, startDate: project.startDate ?? "", endDate: project.endDate ?? "", manager: project.manager ?? "", responsibleUserId: resolveResponsible(project.responsibleUserId, project.manager), handoffProgress: project.handoffProgress ?? project.handoverProgress ?? 100, totalValue: project.totalValue ?? 0 });
+      const { error } = existingResult.data ? await db.from("projects").update(projectValues).eq("id", existingResult.data.id) : await db.from("projects").insert(projectValues);
       if (error) throw new Error(error.message);
       stats.projects += 1;
     }

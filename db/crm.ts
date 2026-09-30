@@ -83,7 +83,7 @@ export async function getSnapshot() {
     contacts: contacts.map((row) => mapRow("contacts", row)),
     opportunities: opportunityRows,
     activities: activities.map((row) => mapRow("activities", row)),
-    projects: projects.map((row) => mapRow("projects", row)),
+    projects: projects.filter((row) => opportunities.some((opportunity) => opportunity.id === row.opportunity_id && opportunity.stage === "Contratada")).map((row) => mapRow("projects", row)),
     kpis: kpis.map((row) => mapRow("kpis", row)),
     backups: backups.map((row) => ({ id: Number(row.id), createdAt: String(row.created_at ?? ""), status: String(row.status ?? ""), fileName: String(row.file_name ?? ""), driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined })),
     insights: { averageContractingDays },
