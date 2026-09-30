@@ -9,7 +9,10 @@ Versão operacional e independente do CRM da Unidade EMBRAPII CTNano/UFMG. A apl
 
 ## Regras de acesso
 
-- somente e-mails `@ctnano.org` podem criar conta;
+- somente e-mails `@ctnano.org` podem criar conta pelo cadastro público;
+- administradores podem cadastrar e convidar contas externas exclusivamente com o perfil `auditor`;
+- o perfil `auditor` consulta as mesmas telas e registros dos usuários comuns, sem criar, editar, excluir, importar ou gerar backups;
+- em Configurações → Cadastro de usuários → Editar, a opção **Acesso ativo** libera ou bloqueia o acesso. Desativar bloqueia as próximas requisições, inclusive de sessões abertas; a interface verifica o acesso a cada 30 segundos e ao receber foco;
 - `ricardo.neres@ctnano.org` é o administrador inicial;
 - todos os demais cadastros recebem o perfil `user`;
 - somente administradores podem promover outro usuário para `admin`, cadastrar usuários, editar indicadores, importar backups ou criar backups no Google Drive;

@@ -13,7 +13,9 @@ export async function GET(request: Request) {
       return response;
     }
   }
-  const response = NextResponse.redirect(new URL("/login?erro=link-invalido", url.origin));
+  // Admin invitation links use implicit tokens in the URL fragment. Browsers
+  // preserve the fragment across this redirect so the client can consume it.
+  const response = NextResponse.redirect(new URL(code ? "/login?erro=link-invalido" : "/auth/convite", url.origin));
   response.headers.set("Cache-Control", "private, no-store");
   return response;
 }

@@ -15,7 +15,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     ? "O link de recuperação é inválido ou expirou."
     : erro === "link-invalido"
       ? "Link inválido ou expirado."
-      : "";
+      : erro === "sem-acesso"
+        ? "Sua conta não tem acesso ativo ao CRM. Entre em contato com o administrador."
+        : "";
   const initialMessage = mensagem === "senha-atualizada"
     ? "Senha atualizada com sucesso. Entre com a nova senha."
     : "";

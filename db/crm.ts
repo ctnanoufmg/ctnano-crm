@@ -33,7 +33,7 @@ function mapRow(entity: CrmEntity, row: Record<string, unknown>) {
   for (const [camel, snake] of Object.entries(fieldMaps[entity])) result[camel] = dateFields.has(snake) && row[snake] == null ? "" : row[snake];
   if (entity === "users") {
     result.active = Boolean(row.active);
-    result.role = row.role === "admin" ? "admin" : "user";
+    result.role = row.role;
   }
   if (entity === "projects" && String(result.status).toLowerCase() === "handover") result.status = "Handoff";
   if (entity === "kpis") result.showOnDashboard = Boolean(row.show_on_dashboard);

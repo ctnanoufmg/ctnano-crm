@@ -5,5 +5,5 @@ export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const user = await requireCrmPageUser();
-  return <CRMApp currentUser={{ email: user.email, name: user.fullName, isAdmin: user.role === "admin" }} />;
+  return <CRMApp currentUser={{ email: user.email, name: user.fullName, isAdmin: user.role === "admin", role: user.role }} />;
 }
