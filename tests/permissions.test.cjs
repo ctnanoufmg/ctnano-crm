@@ -182,3 +182,28 @@ test('auditor record dialogs disable fields and omit save/delete actions', () =>
   assert.match(adminHtml, /value="auditor"/);
   assert.match(adminHtml, /Acesso ativo/);
 });
+
+
+test('period percentages use aggregated counts and values for annual and custom ranges', () => {
+  const { calculateMetrics, fallback } = load('app/crm-app.tsx', {
+    '../lib/access': access, '../lib/supabase/client': {}, '../lib/excel-export': {},
+  }, '\nexport { calculateMetrics, fallback };');
+  const opportunities = [
+    { stage: 'Contratada', sentDate: '2026-01-05', contractDate: '2026-01-20', totalValue: 100, companyValue: 80 },
+    { stage: 'Contratada', sentDate: '2025-12-01', contractDate: '2026-02-20', totalValue: 900, companyValue: 90 },
+    ...Array.from({ length: 4 }, () => ({ stage: 'Proposta enviada', sentDate: '2026-02-05', totalValue: 0, companyValue: 0 })),
+    { stage: 'Contratada', sentDate: '2025-01-01', contractDate: '2025-03-01', totalValue: 1000, companyValue: 1000 },
+  ];
+  const data = { ...fallback, opportunities };
+  for (const range of [{ start: '2026-01-01', end: '2026-12-31' }, { start: '2026-01-01', end: '2026-03-31' }]) {
+    const result = calculateMetrics(data, range);
+    assert.equal(result.proposals, 5);
+    assert.equal(result.contracted, 2);
+    assert.equal(result.successRate, 2 / 5);
+    assert.equal(result.companyParticipation, 170 / 1000);
+  }
+  const empty = calculateMetrics(data, { start: '2027-01-01', end: '2027-12-31' });
+  assert.equal(empty.successRate, 0);
+  assert.equal(empty.companyParticipation, 0);
+});
+

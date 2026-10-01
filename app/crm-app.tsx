@@ -253,24 +253,8 @@ function calculateMetrics(data: Snapshot, range: DateRange): Metrics {
   const startYear = Number(range.start.slice(0, 4));
   const isAnnual = range.start === `${startYear}-01-01` && (range.end === `${startYear}-12-31` || (startYear === Number(localToday().slice(0, 4)) && range.end === localToday()));
   const totalContracted = contracts.reduce((sum, item) => sum + item.totalValue, 0);
-  let companyParticipation = totalContracted ? contracts.reduce((sum, item) => sum + item.companyValue, 0) / totalContracted : 0;
-  let successRate = proposals.length ? contracts.length / proposals.length : 0;
-  if (isAnnual) {
-    const monthBuckets = buckets;
-    const months = monthBuckets.length || 1;
-    companyParticipation = monthBuckets.reduce((sum, bucket) => {
-      const bucketRange = { start: bucket.start, end: bucket.end };
-      const rows = contracts.filter((item) => inRange(item.contractDate, bucketRange));
-      const total = rows.reduce((value, item) => value + item.totalValue, 0);
-      return sum + (total ? rows.reduce((value, item) => value + item.companyValue, 0) / total : 0);
-    }, 0) / months;
-    successRate = monthBuckets.reduce((sum, bucket) => {
-      const bucketRange = { start: bucket.start, end: bucket.end };
-      const proposalCount = proposals.filter((item) => inRange(item.sentDate, bucketRange)).length;
-      const contractCount = contracts.filter((item) => inRange(item.contractDate, bucketRange)).length;
-      return sum + (proposalCount ? contractCount / proposalCount : 0);
-    }, 0) / months;
-  }
+  const companyParticipation = totalContracted ? contracts.reduce((sum, item) => sum + item.companyValue, 0) / totalContracted : 0;
+  const successRate = proposals.length ? contracts.length / proposals.length : 0;
   return {
     mapped: mappedCompanies.length,
     prospected: prospectedContacts.length,
@@ -653,8 +637,8 @@ function Dashboard({ data, metrics, range, preset, availableYears, applyPreset, 
     return { key: kpi.key, label: kpi.label, value: formatKpiValue(actual, kpi.unit), numericValue: actual, target: annualTarget(kpi, metrics.annualYear!)?.target, icon: "↗", detail: "Indicador anual selecionado" };
   }) : [];
   const cards = [...baseCards, ...extraKpiCards,
-    { key: "company_participation", label: "Participação das empresas", value: percent.format(metrics.companyParticipation), target: undefined, icon: "%", detail: metrics.annualYear ? "Média mensal do aporte financeiro" : "Aporte financeiro no período" },
-    { key: "success_rate", label: "Taxa de sucesso", value: percent.format(metrics.successRate), target: undefined, icon: "↗", detail: metrics.annualYear ? "Média mensal de contratos por proposta" : "Contratos por proposta no período" },
+    { key: "company_participation", label: "Participação das empresas", value: percent.format(metrics.companyParticipation), target: undefined, icon: "%", detail: "Aporte das empresas / valor total contratado no período" },
+    { key: "success_rate", label: "Taxa de sucesso", value: percent.format(metrics.successRate), target: undefined, icon: "↗", detail: "Projetos contratados / propostas enviadas no período" },
   ];
   const modalityRows = Array.from(new Set(metrics.periodOpportunities.map((item) => item.modality))).map((modality) => {
     const contracted = metrics.periodOpportunities.filter((item) => item.modality === modality && item.stage === "Contratada").reduce((sum, item) => sum + item.totalValue, 0);
@@ -1156,3 +1140,4 @@ function RecordModal({ modal, snapshot, close, save, remove, canDelete, readOnly
     </section>
   </div>;
 }
+
